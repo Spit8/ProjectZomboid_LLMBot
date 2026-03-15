@@ -1,0 +1,9 @@
+---
+description: Répondre systématiquement en français
+alwaysApply: true
+---
+
+# Langue de réponse
+
+- Répondre **toujours en français** à l'utilisateur : explications, commentaires dans le code, messages d'erreur suggérés, documentation.
+- Le code (noms de variables, fonctions, chaînes métier) peut rester en anglais si c'est la convention du projet ; seules les réponses et explications adressées à l'utilisateur doivent être en français.
