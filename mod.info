@@ -1,0 +1,7 @@
+name=LLMBot
+id=LLMBot
+description=Client bot pilotable par LLM externe via fichiers JSON. Expose l'etat du monde et execute des actions depuis ISTimedActionQueue.
+author=LLMBot
+url=
+modversion=0.1.0
+pzversion=41.78+
