@@ -1,8 +1,6 @@
--- LLMBot_Client.lua v1.0 — Build 42.15
--- Plan ANALYSE_LLM_DECISIONS : world_items, poids, worn_clothing, is_clothing,
---   take_item_from_container, grab_world_item, sprint_toggle, drop_heaviest,
---   equip_weapon (ciblé), equip_clothing.
--- Requis: TimedActions/ISGrabItemAction, ISInventoryTransferUtil, ISWearClothing (chargés par le jeu)
+-- LLMBot_Client.lua v1.1 — Build 42.15
+-- Phase 1 : drink, apply_bandage ; obs body_damage, is_drink, is_bandage.
+-- Requis: ISDrinkFromBottle, ISApplyBandage (chargés par le jeu)
 
 -- Charger les TimedActions utilisées (conteneur -> inventaire, ramassage au sol)
 if not ISInventoryTransferUtil then require "TimedActions/ISInventoryTransferUtil" end
@@ -77,6 +75,55 @@ local function addClothingFields(item, entry)
     end)
 end
 
+-- Phase 1 : item buvable (eau) ou bandage. Sources: getFluidContainer, isWaterSource, isCanBandage — ISInventoryPane.lua
+local function addDrinkAndBandageFields(item, entry)
+    if not item or not entry then return end
+    pcall(function()
+        if item.getFluidContainer and item:getFluidContainer() then
+            local fc = item:getFluidContainer()
+            if not fc:isEmpty() and fc.getPrimaryFluid and fc:getPrimaryFluid() then
+                local fluidType = fc:getPrimaryFluid():getFluidTypeString()
+                if fluidType == "Water" or fluidType == "CarbonatedWater" then
+                    entry.is_drink = true
+                end
+            end
+        end
+        if item.isWaterSource and item:isWaterSource() then
+            entry.is_drink = true
+        end
+        if item.isCanBandage and item:isCanBandage() then
+            entry.is_bandage = true
+        end
+    end)
+end
+
+-- Phase 1 : resume des degats corporels (saignement, besoin de bandage). Sources: getBodyDamage, getBodyParts, haveDamagePart
+local function getBodyDamageSummary(player)
+    local out = { is_bleeding = false, needs_bandage = false }
+    if not player or not player.getBodyDamage then return out end
+    pcall(function()
+        if not BodyPartType or not BodyPartType.ToIndex or not BodyPartType.MAX then return end
+        local bd = player:getBodyDamage()
+        if not bd or not bd.getBodyParts then return end
+        local bodyParts = bd:getBodyParts()
+        if not bodyParts then return end
+        for idx = 0, BodyPartType.ToIndex(BodyPartType.MAX) - 1 do
+            local bp = bodyParts:get(idx)
+            if bp and not bp:bandaged() then
+                if bp.bleeding and bp:bleeding() then out.is_bleeding = true end
+                if bp.getBandageNeededDamageLevel and bp:getBandageNeededDamageLevel() and bp:getBandageNeededDamageLevel() > 0 then
+                    out.needs_bandage = true
+                end
+                if bp.scratched and bp:scratched() then out.needs_bandage = true end
+                if bp.deepWounded and bp:deepWounded() then out.needs_bandage = true end
+                if bp.bitten and bp:bitten() then out.needs_bandage = true end
+                if bp.isBurnt and bp:isBurnt() then out.needs_bandage = true end
+            end
+        end
+    end)
+    return out
+end
+
 -- Objets au sol (IsoWorldInventoryObject) sur les tiles à proximité.
 -- Sources: square:getWorldObjects(), getItem() — ISWorldObjectContextMenu, ISGrabItemAction
 local WORLD_ITEMS_RADIUS = 3
@@ -125,6 +172,7 @@ local function scanWorldItemsNearPlayer(cell, playerX, playerY, playerZ)
                                     end)
                                 end
                                 addClothingFields(invItem, entry)
+                                addDrinkAndBandageFields(invItem, entry)
                                 table.insert(result, entry)
                             end
                         end
@@ -178,6 +226,7 @@ local function scanSquareContainers(sq, playerX, playerY)
                         end)
                     end
                     addClothingFields(item, entry)
+                    addDrinkAndBandageFields(item, entry)
                     table.insert(items, entry)
                 end
             end
@@ -318,6 +367,7 @@ local function buildObservation(player)
         equipped         = {},
         world_items      = {},
         worn_clothing    = {},
+        body_damage      = { is_bleeding = false, needs_bandage = false },
         inventory_weight = 0,
         max_weight       = 0,
         action_queue     = 0,
@@ -414,8 +464,12 @@ local function buildObservation(player)
             end)
         end
         addClothingFields(item, entry)
+        addDrinkAndBandageFields(item, entry)
         table.insert(obs.inventory, entry)
     end
+
+    -- Phase 1 : degats corporels (saignement, besoin bandage)
+    obs.body_damage = getBodyDamageSummary(player)
 
     local cell = getCell()
 
@@ -590,6 +644,92 @@ local function executeCommand(player, cmd)
             print("[LLMBot] eat_best_food: " .. tostring(best:getName()))
         else
             print("[LLMBot] eat_best_food: aucune nourriture")
+        end
+
+    elseif a == "drink" then
+        local spec = cmd.item_type or cmd.item_name
+        local inv = player:getInventory()
+        local invItems = inv:getItems()
+        local chosen = nil
+        for i = 0, invItems:size() - 1 do
+            local item = invItems:get(i)
+            if item and item.getFluidContainer and item:getFluidContainer() then
+                local fc = item:getFluidContainer()
+                if not fc:isEmpty() and fc.getPrimaryFluid and fc:getPrimaryFluid() then
+                    local ft = fc:getPrimaryFluid():getFluidTypeString()
+                    if ft == "Water" or ft == "CarbonatedWater" then
+                        if not spec or tostring(item:getType()) == tostring(spec) or tostring(item:getName()) == tostring(spec) then
+                            chosen = item
+                            break
+                        end
+                        if not chosen then chosen = item end
+                    end
+                end
+            end
+            if not chosen and item and item.isWaterSource and item:isWaterSource() then
+                if not spec or tostring(item:getType()) == tostring(spec) or tostring(item:getName()) == tostring(spec) then
+                    chosen = item
+                    break
+                end
+                if not chosen then chosen = item end
+            end
+        end
+        if chosen then
+            ISTimedActionQueue.clear(player)
+            pcall(function()
+                if ISDrinkFromBottle then
+                    ISTimedActionQueue.add(ISDrinkFromBottle:new(player, chosen, 1))
+                    print("[LLMBot] drink: " .. tostring(chosen:getName()))
+                elseif ISDrinkFluidAction then
+                    ISTimedActionQueue.add(ISDrinkFluidAction:new(player, chosen, 1))
+                    print("[LLMBot] drink (fluid): " .. tostring(chosen:getName()))
+                end
+            end)
+        else
+            print("[LLMBot] drink: aucun item buvable en inventaire")
+        end
+
+    elseif a == "apply_bandage" then
+        local bodyParts = player:getBodyDamage():getBodyParts()
+        local damaged = {}
+        pcall(function()
+            for idx = 0, BodyPartType.ToIndex(BodyPartType.MAX) - 1 do
+                local bp = bodyParts:get(idx)
+                if bp and not bp:bandaged() then
+                    if bp:scratched() or bp:deepWounded() or bp:bitten() or bp:stitched() or bp:bleeding() or bp:isBurnt() then
+                        table.insert(damaged, bp)
+                    end
+                end
+            end
+        end)
+        local worstPart = nil
+        local worstLevel = -1
+        for _, bp in ipairs(damaged) do
+            local lvl = bp.getBandageNeededDamageLevel and bp:getBandageNeededDamageLevel() or 0
+            if lvl > worstLevel then worstLevel = lvl; worstPart = bp end
+        end
+        if not worstPart and #damaged > 0 then worstPart = damaged[1] end
+        local bandageItem = nil
+        local spec = cmd.item_type or cmd.item_name
+        local inv = player:getInventory()
+        local invItems = inv:getItems()
+        for i = 0, invItems:size() - 1 do
+            local item = invItems:get(i)
+            if item and item.isCanBandage and item:isCanBandage() then
+                if not spec or tostring(item:getType()) == tostring(spec) or tostring(item:getName()) == tostring(spec) then
+                    bandageItem = item
+                    break
+                end
+                if not bandageItem then bandageItem = item end
+            end
+        end
+        if worstPart and bandageItem and ISApplyBandage then
+            ISTimedActionQueue.clear(player)
+            ISTimedActionQueue.add(ISApplyBandage:new(player, player, bandageItem, worstPart, true))
+            print("[LLMBot] apply_bandage: " .. tostring(bandageItem:getName()))
+        else
+            if not worstPart then print("[LLMBot] apply_bandage: aucune partie endommagee") end
+            if not bandageItem then print("[LLMBot] apply_bandage: aucun bandage en inventaire") end
         end
 
     elseif a == "equip_best_weapon" then

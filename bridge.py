@@ -26,6 +26,8 @@ ACTIONS DISPONIBLES :
   {"action": "move_to", "x": INT, "y": INT, "z": INT?}
   {"action": "attack_nearest"}
   {"action": "eat_best_food"}
+  {"action": "drink"} ou {"action": "drink", "item_type": "Base.WaterBottleFull"} / "item_name": "..."
+  {"action": "apply_bandage"} ou {"action": "apply_bandage", "item_type": "Base.Bandage"} / "item_name": "..."
   {"action": "equip_best_weapon"}
   {"action": "equip_weapon", "item_type": "Base.Bat" ou "item_name": "Batte"}
   {"action": "equip_clothing", "item_type": "Base.Jacket" ou "item_name": "Veste"}
@@ -37,19 +39,21 @@ ACTIONS DISPONIBLES :
   {"action": "say", "text": "message visible en jeu"}
   {"action": "idle"}
 
-OBSERVATIONS (dans le JSON) : position (x,y,z) ; stats : health (0-100), hunger, thirst, fatigue, etc. (stats.health, stats.hunger, stats.thirst) ; inventory_weight, max_weight ; equipped.primary/secondary (arme avec condition, is_broken, is_two_handed) ; inventory[] (name, type, weight, is_food, is_weapon, is_clothing, body_location, is_two_handed pour armes) ; worn_clothing (body_location, bite_defense, scratch_defense) ; world_items (x,y,dist,name,type,is_weapon,is_food,is_clothing) ; zombies[] (x,y,dist) ; containers[] (x,y,z,explored,items) ; buildings[] (id,name,dist,entry{x,y,z},zombie_count,entrance_danger,visited) ; nearest_unvisited_building ; is_busy, action_queue. Pas d'action "boire" pour l'instant : stats.thirst est visible mais non traitable.
+OBSERVATIONS (dans le JSON) : position (x,y,z) ; stats (health 0-100, hunger, thirst, fatigue, etc.) ; body_damage (is_bleeding, needs_bandage) ; inventory_weight, max_weight ; equipped.primary/secondary ; inventory[] (name, type, weight, is_food, is_drink, is_bandage, is_weapon, is_clothing, body_location, ...) ; worn_clothing ; world_items (avec is_drink, is_bandage) ; zombies[] ; containers[] (items avec is_drink, is_bandage) ; buildings[] ; nearest_unvisited_building ; is_busy, action_queue.
 
 PRIORITES DE SURVIE :
 1. Si stats.health < 50 et pas de zombie proche → idle (se reposer)
-2. Si zombie a dist < 3 → attack_nearest si arme equipee (non cassee), sinon sprint_toggle + move_to (fuir)
-3. Si stats.hunger eleve (ex. > 0.5) et nourriture en inventaire → eat_best_food
-4. Pas d'arme equipee → equip_best_weapon ou equip_weapon avec item_type
-5. Manque protection (worn_clothing) → equip_clothing avec item is_clothing de l'inventaire
-6. Objet utile au sol (world_items) → grab_world_item (x,y) ou index
-7. Conteneur avec objet utile (containers[].items) → take_item_from_container (x, y, item_type ou item_name)
-8. Conteneur non explore proche → loot_container puis take_item_from_container
-9. Trop charge (inventory_weight ~ max_weight) : si sac (Back/Bag) en inventaire non porte → equip_clothing(sac) pour augmenter max_weight ; sinon → drop_heaviest
-10. buildings / nearest_unvisited_building : explorer, move_to(entry.x, entry.y)
+2. Si body_damage.is_bleeding ou body_damage.needs_bandage et item is_bandage en inventaire → apply_bandage
+3. Si zombie a dist < 3 → attack_nearest si arme equipee (non cassee), sinon sprint_toggle + move_to (fuir)
+4. Si stats.thirst eleve (ex. > 0.2) et item is_drink en inventaire → drink
+5. Si stats.hunger eleve (ex. > 0.5) et nourriture en inventaire → eat_best_food
+6. Pas d'arme equipee → equip_best_weapon ou equip_weapon avec item_type
+7. Manque protection (worn_clothing) → equip_clothing avec item is_clothing de l'inventaire
+8. Objet utile au sol (world_items) → grab_world_item (x,y) ou index
+9. Conteneur avec objet utile (containers[].items) → take_item_from_container (x, y, item_type ou item_name)
+10. Conteneur non explore proche → loot_container puis take_item_from_container
+11. Trop charge (inventory_weight ~ max_weight) : si sac (Back/Bag) en inventaire non porte → equip_clothing(sac) pour augmenter max_weight ; sinon → drop_heaviest
+12. buildings / nearest_unvisited_building : explorer, move_to(entry.x, entry.y)
 
 INDICATIONS DE JEU :
 - Equiper un sac (sac a dos, sac de sport, etc.) augmente max_weight : utiliser equip_clothing avec un item is_clothing dont body_location est "Back" (ou "Bag") pour porter plus.
@@ -166,8 +170,16 @@ def format_obs_summary(obs: dict) -> str:
         return it.get(key, default) if isinstance(it, dict) else default
 
     food_count   = sum(1 for i in inv if item_get(i, "is_food"))
+    drink_count  = sum(1 for i in inv if item_get(i, "is_drink"))
+    bandage_count = sum(1 for i in inv if item_get(i, "is_bandage"))
     weapon_count = sum(1 for i in inv if item_get(i, "is_weapon"))
     weapons_ok   = sum(1 for i in inv if item_get(i, "is_weapon") and not item_get(i, "is_broken") and (item_get(i, "condition") or 0) > 0)
+    body = _safe_dict(obs.get("body_damage"))
+    body_str = "bleed" if body.get("is_bleeding") else ""
+    if body.get("needs_bandage"):
+        body_str = (body_str + " bandage" if body_str else "bandage")
+    if not body_str:
+        body_str = "ok"
     unexplored   = [c for c in cont if not item_get(c, "explored")]
     nearest_z    = min((item_get(z, "dist", 999) for z in zomb if isinstance(z, dict)), default=999)
 
@@ -195,7 +207,8 @@ def format_obs_summary(obs: dict) -> str:
         f"sanity={stats.get('sanity', 0):.2f} "
         f"infected={stats.get('infected', False)} | "
         f"weapon={primary_name}{primary_cond} | "
-        f"inv={len(inv)} items ({food_count} food, {weapon_count} weapons, {weapons_ok} ok) | "
+        f"body={body_str} | "
+        f"inv={len(inv)} items ({food_count} food, {drink_count} drink, {bandage_count} bandage, {weapon_count} weapons, {weapons_ok} ok) | "
         f"zombies={len(zomb)} (nearest={nearest_z:.0f}t) | "
         f"containers={len(cont)} ({len(unexplored)} unexplored) | "
         f"buildings={len(buildings)} total, {len(_safe_list(obs.get('visited_building_ids')))} visités | "

@@ -17,6 +17,8 @@ LLMBot.ACTIONS = {
     "equip_weapon",             -- {action, item_type ou item_name}
     "equip_clothing",           -- {action, item_type ou item_name}
     "eat_best_food",            -- {action}
+    "drink",                    -- {action} ou {action, item_type/item_name}
+    "apply_bandage",            -- {action} ou {action, item_type/item_name}
     "drop_heaviest",            -- {action}
     "sprint_toggle",            -- {action}
     "take_item_from_container", -- {action, x, y, z, item_type ou item_name}
