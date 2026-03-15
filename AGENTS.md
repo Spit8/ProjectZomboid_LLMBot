@@ -17,6 +17,20 @@ C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media\lua
 
 Cela s'applique aussi bien aux fichiers Lua du mod (`LLMBot_Client.lua`, `LLMBot_Shared.lua`) qu'au bridge Python (`bridge.py`) qui génère des commandes JSON consommées par le mod.
 
+## Règle obligatoire — Déploiement automatique après modification Lua
+
+**Après toute modification de `LLMBot_Client.lua` et/ou `LLMBot_Shared.lua`**, l'agent DOIT exécuter `update_mod.bat` pour déployer les fichiers modifiés dans le dossier du mod Project Zomboid.
+
+```
+update_mod.bat
+```
+
+Ce script copie les fichiers vers :
+- `LLMBot_Client.lua` → `C:\Users\wiwil\Zomboid\Workshop\LLMBot\Contents\mods\LLMBot\42\media\lua\client\`
+- `LLMBot_Shared.lua` → `C:\Users\wiwil\Zomboid\Workshop\LLMBot\Contents\mods\LLMBot\42\media\lua\shared\`
+
+L'exécution doit avoir lieu **après le commit** des fichiers modifiés, afin que le jeu utilise immédiatement la dernière version du mod.
+
 ## Cursor Cloud specific instructions
 
 ### Project overview
