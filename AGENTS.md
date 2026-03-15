@@ -19,6 +19,14 @@ Cela s'applique aussi bien aux fichiers Lua du mod (`LLMBot_Client.lua`, `LLMBot
 
 ## Règle obligatoire — Déploiement automatique après modification Lua
 
+**Pour lancer `bridge.py` en local**, l'agent DOIT utiliser `start_bridge.bat` au lieu d'appeler `python bridge.py` directement. Ce script configure les chemins corrects vers les fichiers d'observation (`--obs`) et de commande (`--cmd`) correspondant à l'installation locale de Project Zomboid.
+
+```
+start_bridge.bat
+```
+
+Si l'agent modifie `bridge.py`, il DOIT vérifier que `start_bridge.bat` est toujours compatible (arguments CLI, nouveaux flags, etc.) et le mettre à jour si nécessaire.
+
 **Après toute modification de `LLMBot_Client.lua` et/ou `LLMBot_Shared.lua`**, l'agent DOIT exécuter `update_mod.bat` pour déployer les fichiers modifiés dans le dossier du mod Project Zomboid.
 
 ```

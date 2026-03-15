@@ -1,7 +1,8 @@
--- LLMBot_Client.lua v0.8 — Build 42.15
+-- LLMBot_Client.lua v0.9 — Build 42.15
 -- Sources confirmees : ISEatFoodAction, ISEquipWeaponAction, WalkToTimedAction,
 --                      ISStatsAndBody, ISHealthPanel, ISMenuContextWorld,
---                      ISOpenContainerTimedAction
+--                      ISOpenContainerTimedAction, ISInventoryPane (getCondition),
+--                      DebugChunkState_SquarePanel (getRoom, getBuilding, getDef)
 
 -- ---------------------------------------------------------------
 -- 1. FICHIERS (Zomboid/Lua/)
@@ -44,6 +45,21 @@ end
 -- 2. HELPERS
 -- ---------------------------------------------------------------
 
+-- Champs condition pour HandWeapon (getCondition, getConditionMax, isBroken)
+-- Sources: ISInventoryPane.lua, ISInventoryPaneContextMenu.lua
+local function getWeaponConditionFields(item)
+    if not item or not instanceof(item, "HandWeapon") then return nil end
+    local ok, cond, condMax, broken = pcall(function()
+        return item:getCondition(), item:getConditionMax(), item:isBroken()
+    end)
+    if not ok or cond == nil then return nil end
+    return {
+        condition     = cond,
+        condition_max = condMax or cond,
+        is_broken     = (broken == true) or (cond and cond <= 0),
+    }
+end
+
 -- Scanner les conteneurs sur un IsoGridSquare
 -- Confirme ISMenuContextWorld.lua : sq:getObjects():size(), sq:getObjects():get(i)
 -- Confirme ISOpenContainerTimedAction.lua : obj:getContainer(), container:isExplored()
@@ -72,6 +88,12 @@ local function scanSquareContainers(sq, playerX, playerY)
                     end
                     if instanceof(item, "HandWeapon") then
                         entry.is_weapon = true
+                        local wf = getWeaponConditionFields(item)
+                        if wf then
+                            entry.condition = wf.condition
+                            entry.condition_max = wf.condition_max
+                            entry.is_broken = wf.is_broken
+                        end
                     end
                     table.insert(items, entry)
                 end
@@ -91,6 +113,51 @@ local function scanSquareContainers(sq, playerX, playerY)
     return result
 end
 
+-- Bâtiments les plus proches (square:getRoom, getBuilding, getDef — DebugChunkState_SquarePanel, BuildingHelper)
+local BUILDING_SCAN_RADIUS = 15
+local BUILDING_MAX_COUNT   = 10
+
+local function scanNearbyBuildings(player, cell, playerX, playerY, playerZ)
+    local seen = {}
+    local list = {}
+    if not cell then return list end
+    for dx = -BUILDING_SCAN_RADIUS, BUILDING_SCAN_RADIUS do
+        for dy = -BUILDING_SCAN_RADIUS, BUILDING_SCAN_RADIUS do
+            local sq = cell:getGridSquare(playerX + dx, playerY + dy, playerZ)
+            if sq and sq:getRoom() then
+                local building = sq:getBuilding()
+                if building then
+                    local id = building:getID()
+                    if not seen[id] then
+                        seen[id] = true
+                        local dist = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2))
+                        local name = "Building"
+                        local alarm = false
+                        pcall(function()
+                            local roomDef = sq:getRoom():getRoomDef()
+                            if roomDef then name = tostring(roomDef:getName()) end
+                            local def = building:getDef()
+                            if def then alarm = def:isAlarmed() end  -- getDef():isAlarmed() — DebugChunkState_SquarePanel
+                        end)
+                        table.insert(list, { id = id, name = name, dist = dist, alarm = alarm })
+                    else
+                        local d = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2))
+                        for _, b in ipairs(list) do
+                            if b.id == id then
+                                if d < b.dist then b.dist = d end
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.dist < b.dist end)
+    while #list > BUILDING_MAX_COUNT do table.remove(list) end
+    return list
+end
+
 -- ---------------------------------------------------------------
 -- 3. OBSERVATION
 -- ---------------------------------------------------------------
@@ -101,6 +168,7 @@ local function buildObservation(player)
         inventory    = {},
         zombies      = {},
         containers   = {},
+        buildings    = {},
         equipped     = {},
         action_queue = 0,
         is_busy      = false,
@@ -135,13 +203,26 @@ local function buildObservation(player)
             type      = tostring(primary:getType()),
             is_weapon = instanceof(primary, "HandWeapon"),
         }
+        local wf = getWeaponConditionFields(primary)
+        if wf then
+            obs.equipped.primary.condition = wf.condition
+            obs.equipped.primary.condition_max = wf.condition_max
+            obs.equipped.primary.is_broken = wf.is_broken
+        end
     end
     local secondary = player:getSecondaryHandItem()
     if secondary and secondary ~= primary then
         obs.equipped.secondary = {
             name = tostring(secondary:getName()),
             type = tostring(secondary:getType()),
+            is_weapon = instanceof(secondary, "HandWeapon"),
         }
+        local wf = getWeaponConditionFields(secondary)
+        if wf then
+            obs.equipped.secondary.condition = wf.condition
+            obs.equipped.secondary.condition_max = wf.condition_max
+            obs.equipped.secondary.is_broken = wf.is_broken
+        end
     end
 
     -- Inventaire
@@ -160,6 +241,12 @@ local function buildObservation(player)
         end
         if instanceof(item, "HandWeapon") then
             entry.is_weapon = true
+            local wf = getWeaponConditionFields(item)
+            if wf then
+                entry.condition = wf.condition
+                entry.condition_max = wf.condition_max
+                entry.is_broken = wf.is_broken
+            end
         end
         table.insert(obs.inventory, entry)
     end
@@ -195,6 +282,9 @@ local function buildObservation(player)
             end
         end
     end
+
+    -- Bâtiments les plus proches (getRoom, getBuilding — DebugChunkState_SquarePanel)
+    obs.buildings = scanNearbyBuildings(player, cell, px, py, pz)
 
     -- Interieur / exterieur
     local sq = cell:getGridSquare(px, py, pz)
@@ -276,15 +366,18 @@ local function executeCommand(player, cmd)
     elseif a == "equip_best_weapon" then
         local inv      = player:getInventory()
         local invItems = inv:getItems()
-        local best = nil
+        local best, bestCond = nil, -1
         for i = 0, invItems:size() - 1 do
             local item = invItems:get(i)
-            if instanceof(item, "HandWeapon") then best = item; break end
+            if instanceof(item, "HandWeapon") and not item:isBroken() and item:getCondition() > 0 then
+                local c = item:getCondition()
+                if c > bestCond then bestCond = c; best = item end
+            end
         end
         if best then
             ISTimedActionQueue.clear(player)
-            ISTimedActionQueue.add(ISEquipWeaponAction:new(player, best, 50, true, false))
-            print("[LLMBot] equip_best_weapon: " .. tostring(best:getName()))
+            ISTimedActionQueue.add(ISEquipWeaponAction:new(player, best, 50, true, best:isTwoHandWeapon()))
+            print("[LLMBot] equip_best_weapon: " .. tostring(best:getName()) .. " cond=" .. best:getCondition())
         end
 
     elseif a == "attack_nearest" then
@@ -350,6 +443,6 @@ Events.OnTick.Add(function()
 end)
 
 Events.OnGameStart.Add(function()
-    print("[LLMBot] v0.8 pret.")
-    writeFile("LLMBot_test.txt", "ok v0.8")
+    print("[LLMBot] v0.9 pret.")
+    writeFile("LLMBot_test.txt", "ok v0.9")
 end)
