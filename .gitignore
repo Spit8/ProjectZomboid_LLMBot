@@ -47,3 +47,4 @@ luac.out
 secrets.txt
 config.local.*
 
+.env.example
