@@ -372,19 +372,18 @@ def enrich_obs_nearest_unvisited(obs: dict) -> None:
     }
 
 
-def _parse_llm_json(raw: str, log_full: bool) -> dict:
-    """Parse la reponse JSON du LLM ; fallback idle si invalide."""
+def _parse_llm_json(raw: str) -> tuple[dict, str]:
+    """Parse la reponse JSON du LLM ; fallback idle si invalide. Retourne (cmd_dict, raw_string)."""
     raw = raw.strip()
-    if log_full:
-        print(f"[bridge] LLM → {raw}")
+    print(f"[bridge] LLM → {raw}")
     try:
-        return json.loads(raw)
+        return json.loads(raw), raw
     except json.JSONDecodeError:
         print(f"[bridge] JSON invalide, fallback idle")
-        return {"action": "idle"}
+        return {"action": "idle"}, raw
 
 
-def query_anthropic(obs: dict, client, log_full: bool = True) -> dict:
+def query_anthropic(obs: dict, client) -> tuple[dict, str]:
     response = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=150,
@@ -392,10 +391,10 @@ def query_anthropic(obs: dict, client, log_full: bool = True) -> dict:
         messages=[{"role": "user", "content": json.dumps(obs, ensure_ascii=False)}],
     )
     raw = response.content[0].text
-    return _parse_llm_json(raw, log_full)
+    return _parse_llm_json(raw)
 
 
-def query_gemini(obs: dict, client, model: str, log_full: bool = True) -> dict:
+def query_gemini(obs: dict, client, model: str) -> tuple[dict, str]:
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         max_output_tokens=150,
@@ -406,13 +405,13 @@ def query_gemini(obs: dict, client, model: str, log_full: bool = True) -> dict:
         config=config,
     )
     raw = (response.text or "").strip()
-    return _parse_llm_json(raw, log_full)
+    return _parse_llm_json(raw)
 
 
-def query_llm(obs: dict, client, provider: str, log_full: bool = True, gemini_model: str = None) -> dict:
+def query_llm(obs: dict, client, provider: str, log_full: bool = True, gemini_model: str = None) -> tuple[dict, str]:
     if provider == "gemini":
-        return query_gemini(obs, client, gemini_model or "gemini-1.5-flash", log_full)
-    return query_anthropic(obs, client, log_full)
+        return query_gemini(obs, client, gemini_model or "gemini-1.5-flash")
+    return query_anthropic(obs, client)
 
 
 def main():
@@ -575,7 +574,7 @@ def main():
                 time.sleep(args.interval)
                 continue
 
-            cmd = query_llm(obs, client, provider, log_full, gemini_model=gemini_model)
+            cmd, raw_response = query_llm(obs, client, provider, log_full, gemini_model=gemini_model)
 
             with open(cmd_path, "w", encoding="utf-8") as f:
                 json.dump(cmd, f)
@@ -591,6 +590,7 @@ def main():
                 bldg = _safe_list(obs.get("buildings"))
                 if bldg:
                     status += "[bridge] BLDG |\n" + format_buildings(bldg) + "\n"
+                status += f"[bridge] LLM  | {raw_response}\n"
                 status += f"[bridge] CMD  | {cmd.get('action', '?')}"
                 light_refresh(status)
 

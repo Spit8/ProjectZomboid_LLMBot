@@ -947,26 +947,42 @@ Events.OnTick.Add(function()
     local player = getPlayer()
     if not player then return end
 
-    local ok, result = pcall(buildObservation, player)
-    if not ok then
-        print("[LLMBot] obs error: " .. tostring(result))
-        return
-    end
-
-    writeFile(LLMBot.OBS_FILE, LLMBot.toJSON(result))
-
+    -- Flux limite : envoi -> attente decision LLM -> selon decision on renvoie un statut.
+    -- 1) Lire la commande eventuelle
     local raw = readFile(LLMBot.CMD_FILE)
     if raw and raw ~= "" then
         local cmd = LLMBot.fromJSON(raw)
         if cmd and cmd.action then
             deleteFile(LLMBot.CMD_FILE)
+            local ok, result = pcall(buildObservation, player)
+            if not ok then
+                print("[LLMBot] obs error: " .. tostring(result))
+                return
+            end
             if not result.is_busy or cmd.action == "move_to" or cmd.action == "sprint_toggle" then
                 executeCommand(player, cmd)
             else
                 print("[LLMBot] busy, skip: " .. tostring(cmd.action))
             end
+            -- Apres execution : nouveau statut pour la prochaine decision
+            ok, result = pcall(buildObservation, player)
+            if ok and result then
+                writeFile(LLMBot.OBS_FILE, LLMBot.toJSON(result))
+            end
+        else
+            -- Commande invalide : on supprime pour debloquer le cycle
+            deleteFile(LLMBot.CMD_FILE)
         end
+        return
     end
+
+    -- 2) Pas de commande en attente : envoi du statut actuel (demande de decision au LLM)
+    local ok, result = pcall(buildObservation, player)
+    if not ok then
+        print("[LLMBot] obs error: " .. tostring(result))
+        return
+    end
+    writeFile(LLMBot.OBS_FILE, LLMBot.toJSON(result))
 end)
 
 Events.OnGameStart.Add(function()
