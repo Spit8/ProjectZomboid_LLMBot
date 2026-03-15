@@ -1,5 +1,22 @@
 # AGENTS.md
 
+## Règle obligatoire — Vérification des sources Project Zomboid
+
+**Avant toute modification d'un fichier Python (`.py`) ou Lua (`.lua`) de ce dépôt**, l'agent DOIT consulter les sources Lua du jeu pour vérifier les API, signatures de fonctions, noms de classes et comportements utilisés.
+
+Chemin des sources du jeu :
+```
+C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media\lua
+```
+
+Étapes à suivre systématiquement :
+1. Identifier quelles API / classes / fonctions PZ sont concernées par la modification.
+2. Lire les fichiers sources pertinents dans le dossier ci-dessus (par exemple `client/ISUI/`, `client/TimedActions/`, `shared/`, etc.).
+3. Vérifier que les noms de méthodes, paramètres et comportements correspondent bien aux sources du jeu.
+4. Seulement ensuite, procéder à la modification.
+
+Cela s'applique aussi bien aux fichiers Lua du mod (`LLMBot_Client.lua`, `LLMBot_Shared.lua`) qu'au bridge Python (`bridge.py`) qui génère des commandes JSON consommées par le mod.
+
 ## Cursor Cloud specific instructions
 
 ### Project overview
