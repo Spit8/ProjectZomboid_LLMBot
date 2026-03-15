@@ -99,7 +99,7 @@ local function scanSquareContainers(sq, playerX, playerY)
                 end
             end
             local sprite = obj:getSprite()
-            table.insert(result, {
+            local entry = {
                 x        = math.floor(sq:getX()),
                 y        = math.floor(sq:getY()),
                 z        = math.floor(sq:getZ()),
@@ -107,15 +107,22 @@ local function scanSquareContainers(sq, playerX, playerY)
                 name     = sprite and tostring(sprite:getName()) or "unknown",
                 explored = container:isExplored(),
                 items    = items,
-            })
+            }
+            -- Batiment contenant ce conteneur (pour memoire batiments visites + objets)
+            if sq:getRoom() and sq:getBuilding() then
+                entry.building_id = sq:getBuilding():getID()
+            end
+            table.insert(result, entry)
         end
     end
     return result
 end
 
--- Bâtiments les plus proches (square:getRoom, getBuilding, getDef — DebugChunkState_SquarePanel, BuildingHelper)
-local BUILDING_SCAN_RADIUS = 15
-local BUILDING_MAX_COUNT   = 10
+-- Zone observable = ce qui est visible a l'ecran (batiments + zombies coherents)
+-- Hypothese : joueur completement dezoome -> on voit beaucoup de tiles (rayon ~40)
+local VISIBLE_RADIUS = 40
+local BUILDING_SCAN_RADIUS = VISIBLE_RADIUS
+local BUILDING_MAX_COUNT   = 25
 
 local function scanNearbyBuildings(player, cell, playerX, playerY, playerZ)
     local seen = {}
@@ -128,9 +135,12 @@ local function scanNearbyBuildings(player, cell, playerX, playerY, playerZ)
                 local building = sq:getBuilding()
                 if building then
                     local id = building:getID()
+                    local sqX = math.floor(sq:getX())
+                    local sqY = math.floor(sq:getY())
+                    local sqZ = math.floor(sq:getZ())
+                    local dist = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2))
                     if not seen[id] then
                         seen[id] = true
-                        local dist = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2))
                         local name = "Building"
                         local alarm = false
                         pcall(function()
@@ -139,12 +149,17 @@ local function scanNearbyBuildings(player, cell, playerX, playerY, playerZ)
                             local def = building:getDef()
                             if def then alarm = def:isAlarmed() end  -- getDef():isAlarmed() — DebugChunkState_SquarePanel
                         end)
-                        table.insert(list, { id = id, name = name, dist = dist, alarm = alarm })
+                        table.insert(list, {
+                            id = id, name = name, dist = dist, alarm = alarm,
+                            entry = { x = sqX, y = sqY, z = sqZ },
+                        })
                     else
-                        local d = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2))
                         for _, b in ipairs(list) do
                             if b.id == id then
-                                if d < b.dist then b.dist = d end
+                                if dist < b.dist then
+                                    b.dist = dist
+                                    b.entry = { x = sqX, y = sqY, z = sqZ }
+                                end
                                 break
                             end
                         end
@@ -251,16 +266,26 @@ local function buildObservation(player)
         table.insert(obs.inventory, entry)
     end
 
-    -- Zombies proches
+    -- Zombies dans la zone visible a l'ecran (meme rayon que batiments)
     local cell = getCell()
     if cell then
         local zlist = cell:getZombieList()
-        for i = 0, math.min(zlist:size() - 1, 9) do
+        local inRadius = {}
+        for i = 0, zlist:size() - 1 do
             local ze = zlist:get(i)
+            local d = player:DistTo(ze)
+            if d <= VISIBLE_RADIUS then
+                table.insert(inRadius, { ze = ze, dist = d })
+            end
+        end
+        table.sort(inRadius, function(a, b) return a.dist < b.dist end)
+        for _, e in ipairs(inRadius) do
+            if #obs.zombies >= 60 then break end
+            local ze = e.ze
             table.insert(obs.zombies, {
                 x    = math.floor(ze:getX()),
                 y    = math.floor(ze:getY()),
-                dist = math.floor(player:DistTo(ze)),
+                dist = math.floor(e.dist),
             })
         end
     end
@@ -286,10 +311,21 @@ local function buildObservation(player)
     -- Bâtiments les plus proches (getRoom, getBuilding — DebugChunkState_SquarePanel)
     obs.buildings = scanNearbyBuildings(player, cell, px, py, pz)
 
-    -- Interieur / exterieur
+    -- Interieur / exterieur + batiment actuel (ID du jeu : getBuilding():getID())
     local sq = cell:getGridSquare(px, py, pz)
     if sq then
         obs.is_indoors = sq:getRoom() ~= nil
+        if sq:getRoom() then
+            local b = sq:getBuilding()
+            if b then
+                obs.building_id = b:getID()
+                obs.building_name = "Building"
+                pcall(function()
+                    local roomDef = sq:getRoom():getRoomDef()
+                    if roomDef then obs.building_name = tostring(roomDef:getName()) end
+                end)
+            end
+        end
     end
 
     -- Heure du jeu
