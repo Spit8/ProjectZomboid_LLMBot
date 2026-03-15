@@ -4,7 +4,7 @@
 LLMBot = LLMBot or {}
 
 LLMBot.VERSION     = "0.1.0"
-LLMBot.TICK_RATE   = 60          -- ticks entre chaque polling (env. 2s a 30 tps)
+LLMBot.TICK_RATE   = 15          -- ticks entre chaque polling (env. 1s a 30 tps) ; busy etendu cote client
 LLMBot.CMD_FILE    = "LLMBot_cmd.json"   -- bridge ecrit ici
 LLMBot.OBS_FILE    = "LLMBot_obs.json"   -- mod ecrit ici
 
@@ -23,6 +23,10 @@ LLMBot.ACTIONS = {
     "sprint_toggle",            -- {action}
     "take_item_from_container", -- {action, x, y, z, item_type ou item_name}
     "grab_world_item",          -- {action, x, y, z} ou {action, index} (index dans world_items)
+    "open_door",                -- {action, x, y, z?} ouvre une porte non verrouillee
+    "smash_window",             -- {action, x, y, z?} casser une fenetre (arme en main recommande)
+    "remove_glass_window",      -- {action, x, y, z?} enlever les bris de verre apres avoir casse
+    "climb_through_window",     -- {action, x, y, z?} enjamber une fenetre (apres smash + remove_glass, pour entrer)
     "say",                      -- {action, text}
     "idle",                     -- {action}
 }

@@ -63,9 +63,18 @@ LLMBot/
    ```bash
    python bridge.py --provider gemini
    ```
-   Modèle par défaut : `gemini-1.5-flash`. Pour Gemini Pro : `--gemini-model gemini-1.5-pro` ou `set GEMINI_MODEL=gemini-1.5-pro`.
+   Modèle par défaut : `gemini-2.5-flash`. Pour Gemini Pro : `--gemini-model gemini-2.5-pro` ou `set GEMINI_MODEL=gemini-2.5-pro`.
 
-4. Pour tester sans LLM (affichage seul) :
+4. Pour utiliser un **modèle local** (LM Studio, Ollama…) — pas de clé API :
+   - Démarrer le serveur dans LM Studio (Local Server, port 1234 par défaut).
+   - Charger le modèle (ex. Qwen3.5 9B) et noter le nom affiché.
+   ```bash
+   pip install openai
+   python bridge.py --provider local --local-model qwen3.5-9b
+   ```
+   Ou dans `.env` : `LOCAL_API_URL=http://localhost:1234/v1` et `LOCAL_MODEL=qwen3.5-9b`, puis `--provider local`.
+
+5. Pour tester sans LLM (affichage seul) :
    ```bash
    python bridge.py --dry-run
    ```

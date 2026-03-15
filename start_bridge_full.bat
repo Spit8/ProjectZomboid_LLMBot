@@ -9,6 +9,6 @@ echo [LLMBot] obs = %OBS%
 echo [LLMBot] cmd = %CMD%
 echo.
 
-python "%~dp0bridge.py" --obs "%OBS%" --cmd "%CMD%" --interval 2.5 --full
+python "%~dp0bridge.py" --obs "%OBS%" --cmd "%CMD%" --interval 1.0 --full
 
 pause
