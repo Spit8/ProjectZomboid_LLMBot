@@ -23,15 +23,25 @@ LLMBot/
 
 2. Activer le mod dans le menu Mods du jeu.
 
-3. Installer les dépendances Python :
+3. Installer les dépendances Python (au moins une selon le fournisseur) :
    ```bash
-   pip install anthropic
+   pip install anthropic        # pour Claude (Anthropic)
+   pip install google-genai      # pour Gemini (Google)
+   pip install python-dotenv     # optionnel : chargement automatique de .env
    ```
 
-4. Exporter votre clé API :
-   ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."
-   ```
+4. Exporter votre clé API selon le fournisseur choisi :
+   - **Gemini (Google)** : `GEMINI_API_KEY` (recommandé pour démarrer)
+     ```bash
+     set GEMINI_API_KEY=votre_cle_gemini
+     ```
+   - **Claude (Anthropic)** : `ANTHROPIC_API_KEY`
+     ```bash
+     set ANTHROPIC_API_KEY=sk-ant-...
+     ```
+   Si `GEMINI_API_KEY` est défini, le bridge utilise Gemini par défaut ; sinon Claude.
+
+   **Ne jamais mettre sa clé dans le dépôt.** Pour garder la clé hors du repo : copiez `.env.example` en `.env` à la racine du projet, remplissez vos clés dans `.env`. Le fichier `.env` est listé dans `.gitignore` et ne sera pas commité. Le bridge charge automatiquement `.env` au démarrage si le module `python-dotenv` est installé (`pip install python-dotenv`). Sinon, définissez les variables dans le terminal avant de lancer le bridge.
 
 ## Utilisation
 
@@ -49,7 +59,13 @@ LLMBot/
      --interval 2.5
    ```
 
-3. Pour tester sans LLM (affichage seul) :
+3. Pour utiliser **Gemini** explicitement (avec `GEMINI_API_KEY` défini) :
+   ```bash
+   python bridge.py --provider gemini
+   ```
+   Modèle par défaut : `gemini-1.5-flash`. Pour Gemini Pro : `--gemini-model gemini-1.5-pro` ou `set GEMINI_MODEL=gemini-1.5-pro`.
+
+4. Pour tester sans LLM (affichage seul) :
    ```bash
    python bridge.py --dry-run
    ```

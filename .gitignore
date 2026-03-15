@@ -39,3 +39,11 @@ luac.out
 *.x86_64
 *.hex
 
+# Clés API et secrets (ne jamais committer)
+.env
+.env.local
+.env.*.local
+*.key
+secrets.txt
+config.local.*
+

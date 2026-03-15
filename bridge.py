@@ -11,6 +11,15 @@ import time
 import sys
 from pathlib import Path
 
+# Charger .env si présent (fichier gitignoré, ne pas committer les clés)
+try:
+    import dotenv
+    _env_file = Path(__file__).resolve().parent / ".env"
+    if _env_file.exists():
+        dotenv.load_dotenv(_env_file)
+except ImportError:
+    pass
+
 
 try:
     import anthropic
@@ -18,6 +27,14 @@ try:
 except ImportError:
     HAS_ANTHROPIC = False
     print("[bridge] anthropic non installe — mode dry-run force")
+
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GEMINI = True
+except ImportError:
+    HAS_GEMINI = False
+    print("[bridge] google-genai non installe — provider gemini indisponible")
 
 SYSTEM_PROMPT = """Tu es un survivant dans Project Zomboid (apocalypse zombie).
 Tu recois l'etat complet du monde en JSON et tu dois choisir UNE action.
@@ -355,14 +372,9 @@ def enrich_obs_nearest_unvisited(obs: dict) -> None:
     }
 
 
-def query_llm(obs: dict, client, log_full: bool = True) -> dict:
-    response = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=150,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": json.dumps(obs, ensure_ascii=False)}],
-    )
-    raw = response.content[0].text.strip()
+def _parse_llm_json(raw: str, log_full: bool) -> dict:
+    """Parse la reponse JSON du LLM ; fallback idle si invalide."""
+    raw = raw.strip()
     if log_full:
         print(f"[bridge] LLM → {raw}")
     try:
@@ -372,12 +384,47 @@ def query_llm(obs: dict, client, log_full: bool = True) -> dict:
         return {"action": "idle"}
 
 
+def query_anthropic(obs: dict, client, log_full: bool = True) -> dict:
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=150,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": json.dumps(obs, ensure_ascii=False)}],
+    )
+    raw = response.content[0].text
+    return _parse_llm_json(raw, log_full)
+
+
+def query_gemini(obs: dict, client, model: str, log_full: bool = True) -> dict:
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        max_output_tokens=150,
+    )
+    response = client.models.generate_content(
+        model=model,
+        contents=json.dumps(obs, ensure_ascii=False),
+        config=config,
+    )
+    raw = (response.text or "").strip()
+    return _parse_llm_json(raw, log_full)
+
+
+def query_llm(obs: dict, client, provider: str, log_full: bool = True, gemini_model: str = None) -> dict:
+    if provider == "gemini":
+        return query_gemini(obs, client, gemini_model or "gemini-1.5-flash", log_full)
+    return query_anthropic(obs, client, log_full)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--obs",      default="LLMBot_obs.json")
     parser.add_argument("--cmd",      default="LLMBot_cmd.json")
     parser.add_argument("--interval", type=float, default=2.5)
     parser.add_argument("--dry-run",  action="store_true", help="Ne pas appeler le LLM (pas de clé API requise)")
+    parser.add_argument("--provider", default=None, choices=["anthropic", "gemini"],
+                        help="LLM à utiliser : anthropic (Claude) ou gemini (Google). Défaut : gemini si GEMINI_API_KEY, sinon anthropic.")
+    parser.add_argument("--gemini-model", default=None,
+                        help="Modèle Gemini (ex. gemini-1.5-flash, gemini-1.5-pro). Défaut : gemini-1.5-flash ou variable GEMINI_MODEL.")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--full",     action="store_true", help="Logs détaillés (inventaire, zombies, conteneurs, bâtiments)")
     group.add_argument("--light",    action="store_true", help="Une seule ligne par tick (défaut)")
@@ -389,21 +436,40 @@ def main():
     if not args.full and not args.light:
         log_full = False  # défaut = light
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    dry_run = args.dry_run or not HAS_ANTHROPIC
-    if not dry_run and not api_key:
-        dry_run = True
-        print("[bridge] ANTHROPIC_API_KEY non défini — mode dry-run (pas d'appel LLM)")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    provider = args.provider
+    if provider is None:
+        provider = "gemini" if gemini_key else "anthropic"
+
+    dry_run = args.dry_run
+    if provider == "gemini":
+        dry_run = dry_run or not HAS_GEMINI
+        if not dry_run and not gemini_key:
+            dry_run = True
+            print("[bridge] GEMINI_API_KEY non défini — mode dry-run (pas d'appel LLM)")
+    else:
+        dry_run = dry_run or not HAS_ANTHROPIC
+        if not dry_run and not anthropic_key:
+            dry_run = True
+            print("[bridge] ANTHROPIC_API_KEY non défini — mode dry-run (pas d'appel LLM)")
 
     client = None
-    if HAS_ANTHROPIC and not dry_run and api_key:
+    gemini_model = args.gemini_model or os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+    if provider == "gemini" and HAS_GEMINI and not dry_run and gemini_key:
         try:
-            client = anthropic.Anthropic(api_key=api_key)
+            client = genai.Client(api_key=gemini_key)
+        except Exception as e:
+            print(f"[bridge] Erreur client Gemini: {e} — mode dry-run")
+            dry_run = True
+    elif provider == "anthropic" and HAS_ANTHROPIC and not dry_run and anthropic_key:
+        try:
+            client = anthropic.Anthropic(api_key=anthropic_key)
         except Exception as e:
             print(f"[bridge] Erreur client Anthropic: {e} — mode dry-run")
             dry_run = True
 
-    version_str = f"[bridge] v0.4 | obs={obs_path} cmd={cmd_path} interval={args.interval}s dry={dry_run} log={'full' if log_full else 'light'}"
+    version_str = f"[bridge] v0.4 | provider={provider}" + (f" model={gemini_model}" if provider == "gemini" else "") + f" obs={obs_path} cmd={cmd_path} interval={args.interval}s dry={dry_run} log={'full' if log_full else 'light'}"
     if log_full:
         print(version_str)
     else:
@@ -509,7 +575,7 @@ def main():
                 time.sleep(args.interval)
                 continue
 
-            cmd = query_llm(obs, client, log_full)
+            cmd = query_llm(obs, client, provider, log_full, gemini_model=gemini_model)
 
             with open(cmd_path, "w", encoding="utf-8") as f:
                 json.dump(cmd, f)
