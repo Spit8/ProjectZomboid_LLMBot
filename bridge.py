@@ -11,6 +11,7 @@ import time
 import sys
 from pathlib import Path
 
+
 try:
     import anthropic
     HAS_ANTHROPIC = True
@@ -22,31 +23,44 @@ SYSTEM_PROMPT = """Tu es un survivant dans Project Zomboid (apocalypse zombie).
 Tu recois l'etat complet du monde en JSON et tu dois choisir UNE action.
 
 ACTIONS DISPONIBLES :
-  {"action": "move_to", "x": INT, "y": INT}
+  {"action": "move_to", "x": INT, "y": INT, "z": INT?}
   {"action": "attack_nearest"}
   {"action": "eat_best_food"}
   {"action": "equip_best_weapon"}
+  {"action": "equip_weapon", "item_type": "Base.Bat" ou "item_name": "Batte"}
+  {"action": "equip_clothing", "item_type": "Base.Jacket" ou "item_name": "Veste"}
   {"action": "loot_container", "x": INT, "y": INT, "z": INT}
+  {"action": "take_item_from_container", "x": INT, "y": INT, "z": INT?, "item_type": "Base.X" ou "item_name": "Nom"}
+  {"action": "grab_world_item", "x": INT, "y": INT, "z": INT?} ou {"action": "grab_world_item", "index": INT}
+  {"action": "drop_heaviest"}
+  {"action": "sprint_toggle"}
   {"action": "say", "text": "message visible en jeu"}
   {"action": "idle"}
 
+OBSERVATIONS (dans le JSON) : position (x,y,z) ; stats : health (0-100), hunger, thirst, fatigue, etc. (stats.health, stats.hunger, stats.thirst) ; inventory_weight, max_weight ; equipped.primary/secondary (arme avec condition, is_broken, is_two_handed) ; inventory[] (name, type, weight, is_food, is_weapon, is_clothing, body_location, is_two_handed pour armes) ; worn_clothing (body_location, bite_defense, scratch_defense) ; world_items (x,y,dist,name,type,is_weapon,is_food,is_clothing) ; zombies[] (x,y,dist) ; containers[] (x,y,z,explored,items) ; buildings[] (id,name,dist,entry{x,y,z},zombie_count,entrance_danger,visited) ; nearest_unvisited_building ; is_busy, action_queue. Pas d'action "boire" pour l'instant : stats.thirst est visible mais non traitable.
+
 PRIORITES DE SURVIE :
-1. Si health < 50 et pas de zombie proche → idle (se reposer)
-2. Si un zombie est a dist < 3 → attack_nearest si arme equipee (et non cassee), sinon move_to (fuir)
-3. Si hunger > 0.6 et nourriture en inventaire → eat_best_food
-4. Si pas d'arme equipee et HandWeapon en bon etat en inventaire → equip_best_weapon (ignore armes is_broken ou condition=0)
-5. Si conteneur non explore a moins de 5 tiles → loot_container
-6. buildings = liste des batiments (id, name, dist, alarm, entry, visited=true/false). visited = deja entre au moins une fois. move_to(entry.x, entry.y) pour entrer. building_id = batiment ou tu te trouves (nil si exterieur).
-7. visited_buildings_items = objets vus par batiment (id -> liste noms). Utilise pour prioriser batiments non visites ou revenir ou un batiment connu.
-8. nearest_unvisited_building = { name, id, dist, entry {x,y}, danger, zombie_count }. Prochain batiment non visite ; danger = sur/faible/moyen/eleve selon zombies autour de l'entree. Preferer danger faible ou sur.
-9. Sinon explorer (move_to vers position inconnue)
+1. Si stats.health < 50 et pas de zombie proche → idle (se reposer)
+2. Si zombie a dist < 3 → attack_nearest si arme equipee (non cassee), sinon sprint_toggle + move_to (fuir)
+3. Si stats.hunger eleve (ex. > 0.5) et nourriture en inventaire → eat_best_food
+4. Pas d'arme equipee → equip_best_weapon ou equip_weapon avec item_type
+5. Manque protection (worn_clothing) → equip_clothing avec item is_clothing de l'inventaire
+6. Objet utile au sol (world_items) → grab_world_item (x,y) ou index
+7. Conteneur avec objet utile (containers[].items) → take_item_from_container (x, y, item_type ou item_name)
+8. Conteneur non explore proche → loot_container puis take_item_from_container
+9. Trop charge (inventory_weight ~ max_weight) : si sac (Back/Bag) en inventaire non porte → equip_clothing(sac) pour augmenter max_weight ; sinon → drop_heaviest
+10. buildings / nearest_unvisited_building : explorer, move_to(entry.x, entry.y)
+
+INDICATIONS DE JEU :
+- Equiper un sac (sac a dos, sac de sport, etc.) augmente max_weight : utiliser equip_clothing avec un item is_clothing dont body_location est "Back" (ou "Bag") pour porter plus.
+- En PZ, une arme a deux mains (is_two_handed) ne retire pas le sac a dos : tu peux garder sac + arme deux mains. is_two_handed sert a savoir comment l'arme est portee (deux mains).
+- Les slots worn_clothing (body_location) incluent Torso, Hands, Back, Belt, etc. ; un sac sur le dos (Back) est prioritaire pour la capacite.
 
 REGLES :
 - Reponds UNIQUEMENT avec le JSON de l'action, rien d'autre, pas de markdown
 - Ne jamais attaquer sans arme equipee en bon etat
-- Les armes ont condition, condition_max, is_broken (inventaire, conteneurs, equipped) : preferer condition elevee, ignorer is_broken
-- Preferencer les conteneurs non explores proches
-- Si is_busy=true, prefere idle sauf danger immediat"""
+- Armes : condition, condition_max, is_broken ; preferer condition elevee
+- Si is_busy=true, prefere idle sauf danger immediat ou sprint_toggle"""
 
 
 def _safe_dict(v):
@@ -215,7 +229,7 @@ def format_containers(containers: list) -> str:
 
 
 def format_buildings(buildings: list, max_count: int = 10) -> str:
-    """Formate les bâtiments avec ID, nom, [visité], distance et entrée (x,y)."""
+    """Formate les bâtiments avec ID, nom, [visité], distance, entrée, zombies intérieur, danger entrée."""
     buildings = _safe_list(buildings)
     if not buildings:
         return "  (aucun)"
@@ -227,15 +241,23 @@ def format_buildings(buildings: list, max_count: int = 10) -> str:
         name, dist = b.get("name", "?"), b.get("dist", "?")
         visited = " [visité]" if b.get("visited") else ""
         entry = _safe_dict(b.get("entry"))
+        z_inside = b.get("zombie_count")
+        z_entrance = b.get("entrance_zombie_count")
+        danger = b.get("entrance_danger", "")
+        extra = ""
+        if z_inside is not None:
+            extra += f"  intérieur={z_inside}"
+        if z_entrance is not None and danger:
+            extra += f"  porte={z_entrance} ({danger})"
         if entry and "x" in entry and "y" in entry:
-            lines.append(f"  id={bid}  {name}{visited}  dist={dist}t  entrée=({entry.get('x')},{entry.get('y')})")
+            lines.append(f"  id={bid}  {name}{visited}  dist={dist}t  entrée=({entry.get('x')},{entry.get('y')}){extra}")
         else:
-            lines.append(f"  id={bid}  {name}{visited}  dist={dist}t")
+            lines.append(f"  id={bid}  {name}{visited}  dist={dist}t{extra}")
     return "\n".join(lines) if lines else "  (aucun)"
 
 
 # Rayon (tiles) autour de l'entrée d'un bâtiment pour compter les zombies
-ZOMBIES_NEAR_BUILDING_RADIUS = 12
+ZOMBIES_NEAR_BUILDING_RADIUS = 20
 
 
 def _zombies_near_point(zombies: list, px: int, py: int, radius: float) -> int:
@@ -254,14 +276,14 @@ def _zombies_near_point(zombies: list, px: int, py: int, radius: float) -> int:
 
 
 def _danger_label(zombie_count: int) -> str:
-    """Note de danger selon le nombre de zombies."""
+    """Note de danger (sans accent pour affichage console Windows)."""
     if zombie_count == 0:
-        return "sûr"
+        return "sur"
     if zombie_count <= 3:
         return "faible"
     if zombie_count <= 6:
         return "moyen"
-    return "élevé"
+    return "eleve"
 
 
 def format_nearest_unvisited(obs: dict) -> str:

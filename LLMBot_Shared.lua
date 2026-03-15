@@ -10,14 +10,19 @@ LLMBot.OBS_FILE    = "LLMBot_obs.json"   -- mod ecrit ici
 
 -- Actions reconnues (le bridge envoie l'une de ces valeurs)
 LLMBot.ACTIONS = {
-    "move_to",          -- {action, x, y}
-    "attack_nearest",   -- {action}
-    "loot_container",   -- {action, x, y, z}
-    "equip_best_weapon",-- {action}
-    "eat_best_food",    -- {action}
-    "drop_heaviest",    -- {action}
-    "sprint_toggle",    -- {action}
-    "idle",             -- {action}  -- ne rien faire ce tick
+    "move_to",                  -- {action, x, y, z?}
+    "attack_nearest",           -- {action}
+    "loot_container",           -- {action, x, y, z}
+    "equip_best_weapon",        -- {action}
+    "equip_weapon",             -- {action, item_type ou item_name}
+    "equip_clothing",           -- {action, item_type ou item_name}
+    "eat_best_food",            -- {action}
+    "drop_heaviest",            -- {action}
+    "sprint_toggle",            -- {action}
+    "take_item_from_container", -- {action, x, y, z, item_type ou item_name}
+    "grab_world_item",          -- {action, x, y, z} ou {action, index} (index dans world_items)
+    "say",                      -- {action, text}
+    "idle",                     -- {action}
 }
 
 -- ---------------------------------------------------------------

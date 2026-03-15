@@ -1,8 +1,12 @@
--- LLMBot_Client.lua v0.9 — Build 42.15
--- Sources confirmees : ISEatFoodAction, ISEquipWeaponAction, WalkToTimedAction,
---                      ISStatsAndBody, ISHealthPanel, ISMenuContextWorld,
---                      ISOpenContainerTimedAction, ISInventoryPane (getCondition),
---                      DebugChunkState_SquarePanel (getRoom, getBuilding, getDef)
+-- LLMBot_Client.lua v1.0 — Build 42.15
+-- Plan ANALYSE_LLM_DECISIONS : world_items, poids, worn_clothing, is_clothing,
+--   take_item_from_container, grab_world_item, sprint_toggle, drop_heaviest,
+--   equip_weapon (ciblé), equip_clothing.
+-- Requis: TimedActions/ISGrabItemAction, ISInventoryTransferUtil, ISWearClothing (chargés par le jeu)
+
+-- Charger les TimedActions utilisées (conteneur -> inventaire, ramassage au sol)
+if not ISInventoryTransferUtil then require "TimedActions/ISInventoryTransferUtil" end
+if not ISGrabItemAction then require "TimedActions/ISGrabItemAction" end
 
 -- ---------------------------------------------------------------
 -- 1. FICHIERS (Zomboid/Lua/)
@@ -60,6 +64,79 @@ local function getWeaponConditionFields(item)
     }
 end
 
+-- Enrichit une entrée item (name, type, weight, ...) avec is_clothing et body_location
+-- Sources: IsClothing(), getBodyLocation() — ISInventoryPaneContextMenu
+local function addClothingFields(item, entry)
+    if not item or not entry then return end
+    pcall(function()
+        if item.IsClothing and item:IsClothing() then
+            entry.is_clothing = true
+            local loc = item.getBodyLocation and item:getBodyLocation()
+            if loc then entry.body_location = tostring(loc) end
+        end
+    end)
+end
+
+-- Objets au sol (IsoWorldInventoryObject) sur les tiles à proximité.
+-- Sources: square:getWorldObjects(), getItem() — ISWorldObjectContextMenu, ISGrabItemAction
+local WORLD_ITEMS_RADIUS = 3
+local WORLD_ITEMS_MAX = 30
+
+local function scanWorldItemsNearPlayer(cell, playerX, playerY, playerZ)
+    local result = {}
+    if not cell then return result end
+    for dx = -WORLD_ITEMS_RADIUS, WORLD_ITEMS_RADIUS do
+        for dy = -WORLD_ITEMS_RADIUS, WORLD_ITEMS_RADIUS do
+            local sq = cell:getGridSquare(playerX + dx, playerY + dy, playerZ)
+            if sq then
+                local wobs = sq:getWorldObjects()
+                if wobs then
+                    for i = 0, wobs:size() - 1 do
+                        if #result >= WORLD_ITEMS_MAX then return result end
+                        local wob = wobs:get(i)
+                        if wob and wob.getItem then
+                            local invItem = wob:getItem()
+                            if invItem then
+                                local entry = {
+                                    x     = math.floor(sq:getX()),
+                                    y     = math.floor(sq:getY()),
+                                    z     = math.floor(sq:getZ()),
+                                    dist  = math.floor(math.sqrt((sq:getX() - playerX)^2 + (sq:getY() - playerY)^2)),
+                                    name  = tostring(invItem:getName()),
+                                    type  = tostring(invItem:getType()),
+                                    weight = (invItem.getActualWeight and invItem:getActualWeight()) or 0,
+                                }
+                                if invItem.IsFood and invItem:IsFood() then
+                                    entry.is_food = true
+                                    if invItem.getHungerChange then entry.hunger_change = invItem:getHungerChange() end
+                                end
+                                if instanceof(invItem, "HandWeapon") then
+                                    entry.is_weapon = true
+                                    local wf = getWeaponConditionFields(invItem)
+                                    if wf then
+                                        entry.condition = wf.condition
+                                        entry.condition_max = wf.condition_max
+                                        entry.is_broken = wf.is_broken
+                                    end
+                                    pcall(function()
+                                        if invItem.isTwoHandWeapon and invItem:isTwoHandWeapon() then
+                                            entry.is_two_handed = true
+                                        end
+                                    end)
+                                end
+                                addClothingFields(invItem, entry)
+                                table.insert(result, entry)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(result, function(a, b) return (a.dist or 999) < (b.dist or 999) end)
+    return result
+end
+
 -- Scanner les conteneurs sur un IsoGridSquare
 -- Confirme ISMenuContextWorld.lua : sq:getObjects():size(), sq:getObjects():get(i)
 -- Confirme ISOpenContainerTimedAction.lua : obj:getContainer(), container:isExplored()
@@ -94,7 +171,13 @@ local function scanSquareContainers(sq, playerX, playerY)
                             entry.condition_max = wf.condition_max
                             entry.is_broken = wf.is_broken
                         end
+                        pcall(function()
+                            if item.isTwoHandWeapon and item:isTwoHandWeapon() then
+                                entry.is_two_handed = true
+                            end
+                        end)
                     end
+                    addClothingFields(item, entry)
                     table.insert(items, entry)
                 end
             end
@@ -173,20 +256,72 @@ local function scanNearbyBuildings(player, cell, playerX, playerY, playerZ)
     return list
 end
 
+-- Rayon (tiles) autour de l'entree pour le danger "porte" (aligné bridge ZOMBIES_NEAR_BUILDING_RADIUS)
+local ENTRANCE_DANGER_RADIUS = 12
+
+-- Libelles sans accent : affichage correct en console Windows (tous terminaux)
+local function entranceDangerLabel(n)
+    if n == 0 then return "sur" end
+    if n <= 3 then return "faible" end
+    if n <= 6 then return "moyen" end
+    return "eleve"
+end
+
+-- Compte les zombies a l'interieur de chaque batiment + danger a l'entree (zombies pres de entry).
+-- Pour tous les batiments (visites ou non). Sources: getZombieList(), getGridSquare(), getBuilding():getID()
+local function countZombiesInBuildings(cell, buildings, zlist, player, visibleRadius)
+    if not cell or not zlist or not buildings or #buildings == 0 then return end
+    local counts = {}
+    local zombiePositions = {}
+    for i = 0, zlist:size() - 1 do
+        local ze = zlist:get(i)
+        if player:DistTo(ze) <= visibleRadius then
+            local zx, zy, zz = ze:getX(), ze:getY(), ze:getZ()
+            local sq = cell:getGridSquare(zx, zy, zz)
+            if sq and sq:getBuilding() then
+                local bid = sq:getBuilding():getID()
+                counts[bid] = (counts[bid] or 0) + 1
+            end
+            table.insert(zombiePositions, { x = zx, y = zy })
+        end
+    end
+    for _, b in ipairs(buildings) do
+        b.zombie_count = counts[b.id] or 0
+        local entry = b.entry
+        local ex, ey = entry and entry.x, entry and entry.y
+        if ex and ey then
+            local n = 0
+            for _, zp in ipairs(zombiePositions) do
+                local d = math.sqrt((zp.x - ex)^2 + (zp.y - ey)^2)
+                if d <= ENTRANCE_DANGER_RADIUS then n = n + 1 end
+            end
+            b.entrance_zombie_count = n
+            b.entrance_danger = entranceDangerLabel(n)
+        else
+            b.entrance_zombie_count = 0
+            b.entrance_danger = "sur"
+        end
+    end
+end
+
 -- ---------------------------------------------------------------
 -- 3. OBSERVATION
 -- ---------------------------------------------------------------
 local function buildObservation(player)
     local obs = {
-        position     = {},
-        stats        = {},
-        inventory    = {},
-        zombies      = {},
-        containers   = {},
-        buildings    = {},
-        equipped     = {},
-        action_queue = 0,
-        is_busy      = false,
+        position         = {},
+        stats            = {},
+        inventory        = {},
+        zombies          = {},
+        containers       = {},
+        buildings        = {},
+        equipped         = {},
+        world_items      = {},
+        worn_clothing    = {},
+        inventory_weight = 0,
+        max_weight       = 0,
+        action_queue     = 0,
+        is_busy          = false,
     }
 
     -- Position
@@ -224,6 +359,11 @@ local function buildObservation(player)
             obs.equipped.primary.condition_max = wf.condition_max
             obs.equipped.primary.is_broken = wf.is_broken
         end
+        pcall(function()
+            if primary.isTwoHandWeapon and primary:isTwoHandWeapon() then
+                obs.equipped.primary.is_two_handed = true
+            end
+        end)
     end
     local secondary = player:getSecondaryHandItem()
     if secondary and secondary ~= primary then
@@ -238,6 +378,11 @@ local function buildObservation(player)
             obs.equipped.secondary.condition_max = wf.condition_max
             obs.equipped.secondary.is_broken = wf.is_broken
         end
+        pcall(function()
+            if secondary.isTwoHandWeapon and secondary:isTwoHandWeapon() then
+                obs.equipped.secondary.is_two_handed = true
+            end
+        end)
     end
 
     -- Inventaire
@@ -262,12 +407,55 @@ local function buildObservation(player)
                 entry.condition_max = wf.condition_max
                 entry.is_broken = wf.is_broken
             end
+            pcall(function()
+                if item.isTwoHandWeapon and item:isTwoHandWeapon() then
+                    entry.is_two_handed = true
+                end
+            end)
         end
+        addClothingFields(item, entry)
         table.insert(obs.inventory, entry)
     end
 
-    -- Zombies dans la zone visible a l'ecran (meme rayon que batiments)
     local cell = getCell()
+
+    -- Poids inventaire (getCapacityWeight, getEffectiveCapacity, getMaxWeight — ISInventoryPage, XpUpdate)
+    pcall(function()
+        local inv = player:getInventory()
+        obs.inventory_weight = (inv.getCapacityWeight and inv:getCapacityWeight()) or 0
+        obs.max_weight = (inv.getEffectiveCapacity and inv:getEffectiveCapacity(player)) or (player.getMaxWeight and player:getMaxWeight()) or 0
+        if obs.max_weight == 0 and player.getMaxWeight then obs.max_weight = player:getMaxWeight() end
+    end)
+
+    -- Vêtements portés (getWornItems, getItem, getLocation, getBiteDefense, getScratchDefense — ISInventoryPaneContextMenu)
+    obs.worn_clothing = {}
+    pcall(function()
+        local wornItems = player:getWornItems()
+        if wornItems and wornItems.size then
+            for i = 1, wornItems:size() do
+                local worn = wornItems:get(i - 1)
+                if worn and worn.getItem then
+                    local it = worn:getItem()
+                    if it then
+                        local loc = worn.getLocation and worn:getLocation()
+                        local e = {
+                            name = tostring(it:getName()),
+                            type = tostring(it:getType()),
+                            body_location = loc and tostring(loc) or nil,
+                        }
+                        if it.getBiteDefense then e.bite_defense = it:getBiteDefense() end
+                        if it.getScratchDefense then e.scratch_defense = it:getScratchDefense() end
+                        table.insert(obs.worn_clothing, e)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- Objets au sol à proximité
+    obs.world_items = scanWorldItemsNearPlayer(cell, px, py, pz)
+
+    -- Zombies dans la zone visible a l'ecran (meme rayon que batiments)
     if cell then
         local zlist = cell:getZombieList()
         local inRadius = {}
@@ -310,6 +498,11 @@ local function buildObservation(player)
 
     -- Bâtiments les plus proches (getRoom, getBuilding — DebugChunkState_SquarePanel)
     obs.buildings = scanNearbyBuildings(player, cell, px, py, pz)
+    -- Nombre de zombies a l'interieur de chaque batiment (meme rayon que zombies visibles)
+    if cell then
+        local zlist = cell:getZombieList()
+        countZombiesInBuildings(cell, obs.buildings, zlist, player, VISIBLE_RADIUS)
+    end
 
     -- Interieur / exterieur + batiment actuel (ID du jeu : getBuilding():getID())
     local sq = cell:getGridSquare(px, py, pz)
@@ -435,6 +628,164 @@ local function executeCommand(player, cmd)
     elseif a == "say" then
         if cmd.text then player:Say(tostring(cmd.text):sub(1, 100)) end
 
+    elseif a == "sprint_toggle" then
+        pcall(function()
+            if player.setRunning then
+                player:setRunning(not player:isRunning())
+                print("[LLMBot] sprint_toggle: " .. tostring(player:isRunning()))
+            elseif player.setVariable and player.getVariableBoolean then
+                local cur = player:getVariableBoolean("IsRunning")
+                player:setVariable("IsRunning", not cur)
+                print("[LLMBot] sprint_toggle (var): " .. tostring(not cur))
+            end
+        end)
+
+    elseif a == "drop_heaviest" then
+        local inv = player:getInventory()
+        local invItems = inv:getItems()
+        local heaviest, bestWeight = nil, -1
+        for i = 0, invItems:size() - 1 do
+            local item = invItems:get(i)
+            local w = (item.getActualWeight and item:getActualWeight()) or 0
+            if w > bestWeight then bestWeight = w; heaviest = item end
+        end
+        if heaviest then
+            ISTimedActionQueue.clear(player)
+            local dropContainer = nil
+            pcall(function()
+                if ISInventoryPage and ISInventoryPage.GetFloorContainer then
+                    dropContainer = ISInventoryPage.GetFloorContainer(player:getPlayerNum())
+                end
+            end)
+            if dropContainer then
+                ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, heaviest, inv, dropContainer))
+                print("[LLMBot] drop_heaviest: " .. tostring(heaviest:getName()))
+            else
+                print("[LLMBot] drop_heaviest: GetFloorContainer indisponible")
+            end
+        else
+            print("[LLMBot] drop_heaviest: inventaire vide")
+        end
+
+    elseif a == "take_item_from_container" then
+        local tx = tonumber(cmd.x)
+        local ty = tonumber(cmd.y)
+        local tz = tonumber(cmd.z) or math.floor(player:getZ())
+        local itemSpec = cmd.item_type or cmd.item_name
+        if not tx or not ty or not itemSpec then
+            print("[LLMBot] take_item_from_container: x,y,item_type ou item_name requis")
+            return
+        end
+        local sq = getCell():getGridSquare(tx, ty, tz)
+        if not sq then return end
+        local objects = sq:getObjects()
+        for i = 0, objects:size() - 1 do
+            local obj = objects:get(i)
+            local container = obj:getContainer()
+            if container then
+                if not luautils.walkToContainer(container, player:getPlayerNum()) then return end
+                local cItems = container:getItems()
+                for j = 0, cItems:size() - 1 do
+                    local item = cItems:get(j)
+                    local itype = tostring(item:getType())
+                    local iname = tostring(item:getName())
+                    if itype == tostring(itemSpec) or iname == tostring(itemSpec) then
+                        ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, item, container, player:getInventory()))
+                        print("[LLMBot] take_item_from_container: " .. iname .. " at " .. tx .. "," .. ty)
+                        return
+                    end
+                end
+                print("[LLMBot] take_item_from_container: item non trouvé " .. tostring(itemSpec))
+                return
+            end
+        end
+        print("[LLMBot] take_item_from_container: pas de conteneur à " .. tx .. "," .. ty)
+
+    elseif a == "grab_world_item" then
+        local tx = tonumber(cmd.x)
+        local ty = tonumber(cmd.y)
+        local tz = tonumber(cmd.z) or math.floor(player:getZ())
+        local idx = tonumber(cmd.index)
+        local cell = getCell()
+        if not cell then return end
+        local worldItemObj = nil
+        if tx and ty then
+            local sq = cell:getGridSquare(tx, ty, tz)
+            if sq then
+                local wobs = sq:getWorldObjects()
+                if wobs and wobs:size() > 0 then
+                    worldItemObj = wobs:get(0)
+                end
+            end
+        elseif idx and idx >= 1 then
+            local list = scanWorldItemsNearPlayer(cell, math.floor(player:getX()), math.floor(player:getY()), math.floor(player:getZ()))
+            local e = list[idx]
+            if e then
+                local sq = cell:getGridSquare(e.x, e.y, e.z or math.floor(player:getZ()))
+                if sq then
+                    local wobs = sq:getWorldObjects()
+                    for wi = 0, wobs:size() - 1 do
+                        local wob = wobs:get(wi)
+                        if wob and wob.getItem then
+                            local it = wob:getItem()
+                            if it and tostring(it:getType()) == (e.type or "") and tostring(it:getName()) == (e.name or "") then
+                                worldItemObj = wob
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if worldItemObj and luautils.walkAdj(player, worldItemObj:getSquare()) then
+            local time = 50
+            if ISWorldObjectContextMenu and ISWorldObjectContextMenu.grabItemTime then
+                time = ISWorldObjectContextMenu.grabItemTime(player, worldItemObj)
+            end
+            ISTimedActionQueue.add(ISGrabItemAction:new(player, worldItemObj, time))
+            print("[LLMBot] grab_world_item at " .. (tx or "?") .. "," .. (ty or "?"))
+        else
+            print("[LLMBot] grab_world_item: objet introuvable ou trop loin")
+        end
+
+    elseif a == "equip_weapon" then
+        local spec = cmd.item_type or cmd.item_name
+        if not spec then spec = "" end
+        spec = tostring(spec)
+        local inv = player:getInventory()
+        local invItems = inv:getItems()
+        for i = 0, invItems:size() - 1 do
+            local item = invItems:get(i)
+            if instanceof(item, "HandWeapon") and not item:isBroken() and item:getCondition() > 0 then
+                if tostring(item:getType()) == spec or tostring(item:getName()) == spec then
+                    ISTimedActionQueue.clear(player)
+                    ISTimedActionQueue.add(ISEquipWeaponAction:new(player, item, 50, true, item:isTwoHandWeapon()))
+                    print("[LLMBot] equip_weapon: " .. tostring(item:getName()))
+                    return
+                end
+            end
+        end
+        print("[LLMBot] equip_weapon: aucune arme correspondante pour " .. spec)
+
+    elseif a == "equip_clothing" then
+        local spec = cmd.item_type or cmd.item_name
+        if not spec then spec = "" end
+        spec = tostring(spec)
+        local inv = player:getInventory()
+        local invItems = inv:getItems()
+        for i = 0, invItems:size() - 1 do
+            local item = invItems:get(i)
+            if item.IsClothing and item:IsClothing() then
+                if tostring(item:getType()) == spec or tostring(item:getName()) == spec then
+                    ISTimedActionQueue.clear(player)
+                    ISTimedActionQueue.add(ISWearClothing:new(player, item, 50))
+                    print("[LLMBot] equip_clothing: " .. tostring(item:getName()))
+                    return
+                end
+            end
+        end
+        print("[LLMBot] equip_clothing: aucun vêtement correspondant pour " .. spec)
+
     elseif a == "idle" then
         print("[LLMBot] idle")
 
@@ -469,7 +820,7 @@ Events.OnTick.Add(function()
         local cmd = LLMBot.fromJSON(raw)
         if cmd and cmd.action then
             deleteFile(LLMBot.CMD_FILE)
-            if not result.is_busy or cmd.action == "move_to" then
+            if not result.is_busy or cmd.action == "move_to" or cmd.action == "sprint_toggle" then
                 executeCommand(player, cmd)
             else
                 print("[LLMBot] busy, skip: " .. tostring(cmd.action))
@@ -479,6 +830,6 @@ Events.OnTick.Add(function()
 end)
 
 Events.OnGameStart.Add(function()
-    print("[LLMBot] v0.9 pret.")
-    writeFile("LLMBot_test.txt", "ok v0.9")
+    print("[LLMBot] v1.0 pret (world_items, poids, worn_clothing, sprint_toggle, drop_heaviest, take_item, grab_world_item, equip_weapon, equip_clothing).")
+    writeFile("LLMBot_test.txt", "ok v1.0")
 end)
