@@ -31,6 +31,16 @@ Ce script copie les fichiers vers :
 
 L'exécution doit avoir lieu **après le commit** des fichiers modifiés, afin que le jeu utilise immédiatement la dernière version du mod.
 
+## Règle obligatoire — Lancement du bridge via start_bridge.bat
+
+**Pour lancer `bridge.py` en local**, l'agent DOIT utiliser `start_bridge.bat` au lieu d'appeler `python bridge.py` directement. Ce script configure les chemins corrects vers les fichiers d'observation (`--obs`) et de commande (`--cmd`) correspondant à l'installation locale de Project Zomboid.
+
+```
+start_bridge.bat
+```
+
+Si l'agent modifie `bridge.py`, il DOIT vérifier que `start_bridge.bat` est toujours compatible (arguments CLI, nouveaux flags, etc.) et le mettre à jour si nécessaire.
+
 ## Cursor Cloud specific instructions
 
 ### Project overview
