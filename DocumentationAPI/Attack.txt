@@ -1,0 +1,23 @@
+=== RECHERCHE APIs ATTAQUE dans C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media\lua ===
+
+---------- doAttack ----------
+  ISReloadWeaponAction.lua:450  character:DoAttack(0);
+  ISReloadWeaponAction.lua:452  character:DoAttack(0);
+  ISReloadWeaponAction.lua:460  character:DoAttack(0);
+  ISReloadWeaponAction.lua:462  character:DoAttack(chargeDelta);
+
+---------- HitCharacter ----------
+  MusicIntensityConfig.lua:16  table.insert(events, { id = "VehicleHitCharacter", intensity = 30.0, duration = 30000 })
+  OnBreak.lua:62  if player:isAttacking() and player:getLastHitCharacter() and instanceof(player:getLastHitCharacter(), "IsoZombie") then  hit = player:getLastHitCharacter() end
+  OnBreak.lua:143  if player:isAttacking() and player:getLastHitCharacter() and instanceof(player:getLastHitCharacter(), "IsoZombie") then  hit = player:getLastHitCharacter() end
+
+---------- startAttack ----------
+  ISReloadWeaponAction.lua:437  character:startAttackLoopSound(attackLoop);
+
+---------- SwingAnim ----------
+  ISEquipWeaponAction.lua:194  if instanceof(self.item, "HandWeapon") and self.item:getSwingAnim() and self.item:getSwingAnim() == "Handgun" then
+  ISEquipWeaponAction.lua:215  if instanceof(primary, "HandWeapon") and primary:getSwingAnim() and primary:getSwingAnim() == "Handgun"  then
+  ISSmashVehicleWindow.lua:22  --       if instanceof(weapon, "HandWeapon") and weapon:getSwingAnim() and not weapon:isRanged() then
+  ISSmashVehicleWindow.lua:23  --               self.character:PlayAnimUnlooped("Attack_" .. weapon:getSwingAnim())
+
+=== FICHIERS DEFINISSANT UNE CLASSE D'ATTAQUE ===

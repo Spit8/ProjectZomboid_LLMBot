@@ -104,7 +104,7 @@ ACTIONS DISPONIBLES :
 OBSERVATIONS : position ; stats ; body_damage ; equipped ; inventory[] ; worn_clothing ; world_items (x, y, dist) ; zombies[] ; containers[] (x, y, dist, items, explored, is_empty) ; known_empty_container_positions ; doors[] ; windows[] ; locked_doors_hint ; pathfinding_blocked_by_locked_door (si present : le pathfinding a ete interrompu car une porte verrouillee bloque, tu DOIS choisir move_to vers une fenetre listee) ; pathfinding_stuck (si present : le joueur marche sans avancer, choisis une autre cible ou action) ; world_item_on_tile_hint ; container_nearby_hint ; all_nearby_containers_empty ; nothing_to_do_hint ; buildings[] ; nearest_unvisited_building ; is_busy ; action_queue ; current_action. Si pathfinding_blocked_by_locked_door ou pathfinding_stuck ou world_item_on_tile_hint ou container_nearby_hint est present, applique l'instruction en priorite.
 
 PRIORITES DE SURVIE :
-1. Si stats.health < 50 et pas de zombie proche → idle (se reposer)
+1. Si stats.health < 50 et pas de zombie proche → se reposer sur place (ne rien faire d'urgent ; si bandage disponible, apply_bandage ; sinon envoie l'action suivante de survie)
 2. Si body_damage.is_bleeding ou body_damage.needs_bandage et item is_bandage en inventaire → apply_bandage
 3. Si zombie a dist < 3 → attack_nearest si arme equipee (non cassee), sinon sprint_toggle + move_to (fuir)
 4. Si stats.thirst eleve (ex. > 0.2) et item is_drink en inventaire → drink
@@ -130,7 +130,7 @@ REGLES :
 - Si world_item_on_tile_hint ou container_nearby_hint : grab_world_item ou action conteneur (loot_container une seule fois si pas ouvert, sinon take_item_from_container avec item_type de items_of_interest/items). Pas move_to.
 - Ne jamais attaquer sans arme equipee en bon etat
 - Armes : condition, condition_max, is_broken ; preferer condition elevee
-- Si is_busy=true (ou current_action present) : le personnage est occupe. Reponds de preference avec idle. Ne renvoie JAMAIS move_to vers la meme destination que tu viens de donner (cela provoque une boucle). En cas de danger tu peux choisir attack_nearest, apply_bandage, sprint_toggle, open_door, smash_window, remove_glass_window, climb_through_window. N'envoie pas move_to, loot_container, grab_world_item, eat_best_food, drink, equip_* tant qu'il est occupe.
+- Si is_busy=true (ou current_action present) : le personnage est occupe. Le bridge gere l'attente automatiquement — ne renvoie PAS idle. Envoie l'action suivante logique de ton plan. Ne renvoie JAMAIS move_to vers la meme destination que tu viens de donner (cela provoque une boucle). En cas de danger tu peux choisir attack_nearest, apply_bandage, sprint_toggle, open_door, smash_window, remove_glass_window, climb_through_window. N'envoie pas move_to, loot_container, grab_world_item, eat_best_food, drink, equip_* tant qu'il est occupe.
 - Ne jamais take/loot/grab si dist trop grand : move_to d'abord.
 - Porte fermee non verrouillee : open_door avant move_to. Porte verrouillee : move_to fenetre, smash_window, remove_glass_window, puis climb_through_window pour enjamber (obligatoire), puis move_to interieur.
 
@@ -182,7 +182,7 @@ MAX_RESPONSE_TOKENS = 400
 MOVE_TARGET_TOLERANCE_TILES = 2
 
 # Distance max pour considerer un conteneur "a portee" (loot/take sans move_to d'abord). 2 = adjacent ou une case de plus.
-CONTAINER_NEARBY_DIST = 2
+CONTAINER_NEARBY_DIST = 1
 
 # Nombre max de cibles move_to en echec a retenir (evite de renvoyer la meme cible apres pathfinding_stuck / timeout)
 MAX_FAILED_MOVE_TARGETS = 10
@@ -845,7 +845,7 @@ def build_player_busy_block(obs: dict) -> str:
     return (
         "*** JOUEUR OCCUPE (PLAYER BUSY) ***\n"
         f"Le personnage est actuellement occupe: {current} (file d'actions: {queue}).\n"
-        "Reponds de preference avec {\"action\": \"idle\"} sauf en cas de danger immediat (zombie proche, saignement, sante critique).\n"
+        "Le bridge gere l'attente automatiquement. Si danger immediat (zombie proche, saignement, sante critique), envoie l'action urgente. Sinon envoie l'action suivante logique de ton plan.\n"
         "N'envoie pas move_to, loot_container, grab_world_item, eat_best_food, drink ni equip_* tant qu'il est occupe.\n\n"
     )
 
@@ -859,7 +859,7 @@ def build_already_moving_hint(obs: dict, memory: dict) -> str:
         return ""
     return (
         "*** DEJA EN MARCHE *** Tu es deja en train de te deplacer vers ta cible. "
-        "Ne renvoie PAS move_to vers la meme destination. Reponds UNIQUEMENT avec {\"action\": \"idle\"} jusqu'a ton arrivee.\n\n"
+        "Ne renvoie PAS move_to vers la meme destination. Le bridge gere l'attente. Envoie l'action suivante logique de ton plan (loot, open_door, etc.) ou une action urgente si danger.\n\n"
     )
 
 
@@ -1056,14 +1056,14 @@ def apply_hint_overrides(
     on force grab_world_item ou loot_container. Si deja en marche vers la meme destination, forcer idle.
     Retourne (commande_finale, override_effectue)."""
     cmd = _safe_dict(cmd)
-    # Eviter la boucle : meme move_to que la derniere cible envoyee -> idle (en marche OU deja arrive, pour eviter rafale / re-envoi)
+    # Eviter la boucle : meme move_to que la derniere cible envoyee -> skip (en marche OU deja arrive, pour eviter rafale / re-envoi)
     if cmd.get("action") == "move_to" and last_written_move_to and len(last_written_move_to) >= 2:
         try:
             cx, cy = cmd.get("x"), cmd.get("y")
             if cx is not None and cy is not None:
                 lx, ly = last_written_move_to[0], last_written_move_to[1]
                 if int(cx) == int(lx) and int(cy) == int(ly):
-                    return {"action": "idle"}, True
+                    return None, True  # skip : le main loop fera continue
         except (TypeError, ValueError):
             pass
     # Si on doit changer de conteneur (echecs repetes) et que le LLM renvoie take/loot, forcer move_to vers un autre objectif
@@ -1084,7 +1084,7 @@ def apply_hint_overrides(
             cx, cy = c.get("x"), c.get("y")
             if cx is not None and cy is not None:
                 return {"action": "move_to", "x": int(cx), "y": int(cy), "z": int(c.get("z") or 0)}, True
-        return {"action": "idle"}, True
+        return None, True  # aucune cible : skip ce tick
     if cmd.get("action") != "move_to":
         return cmd, False
     pos = _safe_dict(obs.get("position"))
@@ -1095,13 +1095,13 @@ def apply_hint_overrides(
                      and int(px) == int(cx) and int(py) == int(cy))
     except (TypeError, ValueError):
         same_tile = False
-    # move_to vers la position du tick precedent + distance faible = aller-retour entre 2 cases
+    # move_to vers la position du tick precedent + distance faible = aller-retour entre 2 cases -> skip
     try:
         if last_obs_position and len(last_obs_position) >= 2 and cx is not None and cy is not None and px is not None and py is not None:
             if (int(cx), int(cy)) == (int(last_obs_position[0]), int(last_obs_position[1])) and not same_tile:
                 dist = abs(int(cx) - int(px)) + abs(int(cy) - int(py))
                 if dist <= 2:  # oscillation entre cases adjacentes
-                    return {"action": "idle"}, True
+                    return None, True  # skip ce tick
     except (TypeError, ValueError):
         pass
     hint_item = obs.get("world_item_on_tile_hint")
@@ -1127,7 +1127,8 @@ def apply_hint_overrides(
                 if first_type:
                     override = {"action": "take_item_from_container", "x": x, "y": y, "item_type": first_type}
                 else:
-                    override = {"action": "idle"}
+                    # Ouvert mais aucun item_type connu : tenter loot_container pour rafraichir le contenu
+                    override = {"action": "loot_container", "x": x, "y": y}
             elif first_type:
                 override = {"action": "take_item_from_container", "x": x, "y": y, "item_type": first_type}
             else:
@@ -1135,9 +1136,9 @@ def apply_hint_overrides(
             if override.get("action") and hint_cont.get("z") is not None:
                 override["z"] = hint_cont["z"]
             return override, True
-    # move_to vers la case actuelle = boucle ; forcer idle pour casser
+    # move_to vers la case actuelle = boucle ; skip pour casser
     if same_tile:
-        return {"action": "idle"}, True
+        return None, True  # skip ce tick
     return cmd, False
 
 
@@ -1177,21 +1178,21 @@ def _parse_llm_json(raw: str) -> tuple[dict, str]:
     print(f"[bridge] LLM -> {raw[:200]}{'...' if len(raw) > 200 else ''}")
     to_parse = _extract_json_from_llm_response(raw)
     if not to_parse or to_parse.find("{") == -1:
-        print(f"[bridge] JSON introuvable dans la reponse, fallback idle")
-        return {"action": "idle"}, raw
+        print(f"[bridge] JSON introuvable dans la reponse, skip ce tick")
+        return None, raw
     try:
         data = json.loads(to_parse)
     except json.JSONDecodeError as e:
-        print(f"[bridge] JSON invalide ({e}), fallback idle")
-        return {"action": "idle"}, raw
+        print(f"[bridge] JSON invalide ({e}), skip ce tick")
+        return None, raw
     if not isinstance(data, dict):
-        print(f"[bridge] Reponse pas un objet JSON, fallback idle")
-        return {"action": "idle"}, raw
+        print(f"[bridge] Reponse pas un objet JSON, skip ce tick")
+        return None, raw
     has_action = data.get("action")
     has_plan = isinstance(data.get("action_plan"), list) and len(data.get("action_plan", [])) > 0
     if not has_action and not has_plan:
-        print(f"[bridge] Champ 'action' (ou 'action_plan') manquant, fallback idle")
-        return {"action": "idle"}, raw
+        print(f"[bridge] Champ 'action' (ou 'action_plan') manquant, skip ce tick")
+        return None, raw
     return data, raw
 
 
@@ -1388,6 +1389,8 @@ def main():
     position_skip_count = 0  # skips consecutifs pour "position non atteinte" ; apres N on force le deblocage
     busy_skip_count = 0  # skips consecutifs pour is_busy ; apres N on envoie quand meme
     cmd_pending_skip_count = 0  # skips "commande non consommee" ; apres N on force reprise
+    forced_skip_count = 0  # skips forces (boucle move_to / take_item / cible en echec) ; apres N on laisse passer
+    MAX_FORCED_SKIP = 3  # apres ce nombre de skips forces consecutifs, on laisse le LLM trancher
 
     while True:
         try:
@@ -1536,7 +1539,22 @@ def main():
                     if not at_sent_target and not at_actual_target:
                         move_to_blocking = True
                         position_skip_count += 1
-                        if position_skip_count >= MAX_POSITION_SKIP_BEFORE_RECOVERY:
+                        # Detecter si le joueur n'a pas bouge du tout depuis le tick precedent (case inatteignable)
+                        # Mais seulement apres un delai de grace (les premiers ticks apres move_to le joueur est naturellement immobile)
+                        IMMOBILE_GRACE_TICKS = 3  # ne pas tester l'immobilite avant ce nombre de skips
+                        pos = _safe_dict(obs.get("position"))
+                        px, py = pos.get("x"), pos.get("y")
+                        player_has_not_moved = (
+                            position_skip_count > IMMOBILE_GRACE_TICKS
+                            and last_obs_position is not None
+                            and px is not None and py is not None
+                            and int(px) == int(last_obs_position[0])
+                            and int(py) == int(last_obs_position[1])
+                        )
+                        # Recovery rapide apres grace+2 skips sans mouvement (case inatteignable / mur)
+                        # Recovery normal apres MAX_POSITION_SKIP_BEFORE_RECOVERY skips (joueur se deplace mais n'arrive pas)
+                        recovery_threshold = (IMMOBILE_GRACE_TICKS + 2) if player_has_not_moved else MAX_POSITION_SKIP_BEFORE_RECOVERY
+                        if position_skip_count >= recovery_threshold:
                             position_skip_count = 0
                             memory["last_failed_move_to_target"] = {"x": lx, "y": ly}
                             if lx is not None and ly is not None:
@@ -1546,11 +1564,13 @@ def main():
                                     failed_list.append(key)
                                 memory["recent_failed_move_targets"] = failed_list[-MAX_FAILED_MOVE_TARGETS:]
                             memory["last_sent_command"] = None
+                            last_written_move_to = None
                             save_memory(memory_path, memory)
-                            print(f"[bridge] RECOVERY: cible move_to consideree atteinte apres {MAX_POSITION_SKIP_BEFORE_RECOVERY} skips")
+                            reason = "joueur immobile (case inatteignable)" if player_has_not_moved else f"{MAX_POSITION_SKIP_BEFORE_RECOVERY} skips"
+                            print(f"[bridge] RECOVERY: move_to({int(lx)},{int(ly)}) abandonne — {reason}")
                         else:
                             dist = _player_distance_to(obs, lx, ly)
-                            print(f"[bridge] SKIP: cible move_to ({int(lx)},{int(ly)}) non atteinte (dist={dist:.0f}) [{position_skip_count}/{MAX_POSITION_SKIP_BEFORE_RECOVERY}]")
+                            print(f"[bridge] SKIP: cible move_to ({int(lx)},{int(ly)}) non atteinte (dist={dist:.0f}) [{position_skip_count}/{recovery_threshold}]")
                             time.sleep(args.interval)
                             continue
             if not move_to_blocking:
@@ -1559,6 +1579,7 @@ def main():
             # Si le joueur est deja a proximite de last_move_to_target (ex. fenetre) -> envoyer climb_through_window sans depiler la file ni appeler le LLM (casse la boucle meme avec pending plein de move_to/idle)
             cmd = None
             raw_response = None
+            is_approach_move_to = False  # True si move_to genere depuis la file (approche) — bypass filtres anti-boucle
             t = memory.get("last_move_to_target")
             if isinstance(t, dict) and t.get("x") is not None and t.get("y") is not None:
                 tx, ty = int(t["x"]), int(t["y"])
@@ -1568,9 +1589,25 @@ def main():
                     if log_full:
                         print(f"[bridge] Auto climb_through_window({tx},{ty}) (joueur deja a la cible, priorite sur file/LLM)")
 
+            # Effacer last_written_move_to des que le joueur est arrive a destination du dernier move_to envoye.
+            # CRITIQUE : sans ca, last_written_move_to reste bloque sur l'ancienne cible et tous les appels LLM
+            # qui renvoient le meme move_to sont skipes indefiniment (boucle sans appel LLM).
+            if last_written_move_to is not None:
+                lx, ly = last_written_move_to
+                if _player_at_or_near(obs, lx, ly, MOVE_TARGET_TOLERANCE_TILES):
+                    last_written_move_to = None
+                    memory.pop("last_move_to_target", None)
+                    # Effacer aussi last_sent_command pour ne pas bloquer le LLM sur "meme move_to"
+                    if isinstance(memory.get("last_sent_command"), dict) and memory["last_sent_command"].get("action") == "move_to":
+                        memory["last_sent_command"] = None
+                    save_memory(memory_path, memory)
+                    if log_full:
+                        print(f"[bridge] last_written_move_to effacé : joueur arrivé à ({lx},{ly})")
+
             if cmd is None:
                 # File d'actions : si le LLM a envoye une liste (action_plan), on depile une action sans rappeler le LLM
                 pending = memory.get("pending_action_queue") or []
+                is_approach_move_to = False  # True si ce move_to vient de la file (approche vers action de position)
                 if pending:
                     # Ne pas depiler une action "position" si le joueur n'est pas a proximite (evite loot_container avant d'etre arrive)
                     next_cmd = pending[0] if isinstance(pending[0], dict) else {}
@@ -1579,19 +1616,44 @@ def main():
                     if next_action in POSITION_DEPENDENT_ACTIONS:
                         nx, ny = next_cmd.get("x"), next_cmd.get("y")
                         # Pour loot/take : considerer "a portee" si a 2 tiles (CONTAINER_NEARBY_DIST)
-                        max_dist = CONTAINER_NEARBY_DIST if next_action in ("loot_container", "take_item_from_container") else 1.0
+                        # Pour fenetre/porte : adjacent suffit (dist <= 1 en Manhattan)
+                        if next_action in ("loot_container", "take_item_from_container"):
+                            max_dist = CONTAINER_NEARBY_DIST
+                        elif next_action in ("smash_window", "remove_glass_window", "climb_through_window", "open_door"):
+                            max_dist = 1.5
+                        else:
+                            max_dist = 1.0
                         if nx is not None and ny is not None and not _player_at_or_near(obs, nx, ny, max_dist):
                             # Envoyer move_to vers la cible pour que le joueur s'y rende au lieu de rester bloque
                             need_move_to_target = True
                     if need_move_to_target:
                         nx, ny = next_cmd.get("x"), next_cmd.get("y")
-                        cmd = _normalize_cmd({"action": "move_to", "x": int(nx), "y": int(ny)})
+                        # Pour fenetre/porte : ne pas cibler la case de l'objet (inatteignable) mais une case adjacente libre
+                        approach_x, approach_y = int(nx), int(ny)
+                        if next_action in ("smash_window", "remove_glass_window", "climb_through_window", "open_door"):
+                            pos = _safe_dict(obs.get("position"))
+                            px_now, py_now = pos.get("x"), pos.get("y")
+                            if px_now is not None and py_now is not None:
+                                best_adj = None
+                                best_dist = 999
+                                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                                    ax, ay = int(nx) + dx, int(ny) + dy
+                                    if ax == int(nx) and ay == int(ny):
+                                        continue
+                                    d = abs(ax - int(px_now)) + abs(ay - int(py_now))
+                                    if d < best_dist:
+                                        best_dist = d
+                                        best_adj = (ax, ay)
+                                if best_adj:
+                                    approach_x, approach_y = best_adj
+                        cmd = _normalize_cmd({"action": "move_to", "x": approach_x, "y": approach_y})
                         if next_cmd.get("z") is not None:
                             cmd["z"] = int(next_cmd["z"])
                         raw_response = f"(approche vers {next_action} ({int(nx)},{int(ny)}), file inchangée)"
+                        is_approach_move_to = True  # ce move_to doit bypasser les filtres anti-boucle
                         if log_full:
                             dist = _player_distance_to(obs, nx, ny)
-                            print(f"[bridge] Pas a proximite pour {next_action} (dist={dist:.0f}) -> envoi move_to({nx},{ny})")
+                            print(f"[bridge] Pas a proximite pour {next_action} (dist={dist:.0f}) -> envoi move_to({approach_x},{approach_y})")
                         position_skip_count = 0
                     else:
                         position_skip_count = 0
@@ -1640,6 +1702,10 @@ def main():
                     try:
                         cmd, raw_response = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
                         last_api_time = time.time()
+                        if cmd is None:
+                            # JSON invalide ou reponse vide : skip ce tick sans ecrire de commande
+                            time.sleep(args.interval)
+                            continue
                         # Si le LLM a envoye une liste d'actions, remplir la file et prendre la premiere comme commande courante
                         if isinstance(cmd, dict) and "action_plan" in cmd:
                             lst = cmd.get("action_plan")
@@ -1661,6 +1727,9 @@ def main():
                             try:
                                 cmd, raw_response = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
                                 last_api_time = time.time()
+                                if cmd is None:
+                                    time.sleep(args.interval)
+                                    continue
                                 if isinstance(cmd, dict) and "action_plan" in cmd:
                                     lst = cmd.get("action_plan")
                                     if isinstance(lst, list) and len(lst) > 0:
@@ -1674,21 +1743,38 @@ def main():
                             except Exception as retry_err:
                                 err_msg = str(retry_err).strip() or repr(retry_err)
                                 print(f"[bridge] ERREUR API (apres retry) : {err_msg}")
-                                cmd, raw_response = {"action": "idle"}, f"(erreur API) {err_msg}"
+                                print(f"[bridge] Aucune commande envoyee ce tick.")
+                                if not log_full:
+                                    sys.stdout.write("\n")
+                                    sys.stdout.flush()
+                                time.sleep(args.interval)
+                                continue
                         else:
                             print(f"[bridge] ERREUR API : {err_msg}")
                             print(f"[bridge] Verifiez la cle (GEMINI_API_KEY), le modele et le reseau.")
-                            cmd, raw_response = {"action": "idle"}, f"(erreur API) {err_msg}"
-                        if not log_full:
-                            sys.stdout.write("\n")
-                            sys.stdout.flush()
+                            print(f"[bridge] Aucune commande envoyee ce tick.")
+                            if not log_full:
+                                sys.stdout.write("\n")
+                                sys.stdout.flush()
+                            time.sleep(args.interval)
+                            continue
 
-                # Forcer grab/loot ou idle quand hint present ou boucle move_to (evite boucles) — seulement pour reponse LLM
-                cmd, overridden = apply_hint_overrides(
-                    obs, _safe_dict(cmd), last_obs_position, last_written_move_to
-                )
-                if overridden and log_full:
-                    print(f"[bridge] Override | move_to -> {cmd.get('action')} (hint applique)")
+                # Forcer grab/loot ou skip quand hint present ou boucle move_to (evite boucles) — seulement pour reponse LLM, pas pour move_to d'approche depuis la file
+                if not is_approach_move_to:
+                    cmd, overridden = apply_hint_overrides(
+                        obs, _safe_dict(cmd), last_obs_position, last_written_move_to
+                    )
+                    if cmd is None:
+                        # Override demande un skip silencieux (boucle detectee, aucune cible disponible)
+                        forced_skip_count += 1
+                        if log_full:
+                            print(f"[bridge] SKIP forcé | apply_hint_overrides: aucune action valide [{forced_skip_count}]")
+                        time.sleep(args.interval)
+                        continue
+                    if overridden and log_full:
+                        print(f"[bridge] Override | -> {cmd.get('action')} (hint applique)")
+                else:
+                    overridden = False
                 # Porte verrouillee : ne pas reessayer open_door ; forcer move_to vers une fenetre pour quitter la porte
                 if not overridden and cmd.get("action") == "open_door":
                     cx, cy = cmd.get("x"), cmd.get("y")
@@ -1712,7 +1798,7 @@ def main():
             cmd = _normalize_cmd(_safe_dict(cmd))
             idle_was_duplicate_move_to = False  # si True, on ne vide pas last_written_move_to pour eviter boucle move_to(A)->idle->move_to(A)
             # Ne pas renvoyer le meme take_item_from_container en boucle (evite boucle quand l'action bugge cote jeu)
-            if cmd.get("action") == "take_item_from_container":
+            if not is_approach_move_to and cmd.get("action") == "take_item_from_container":
                 tx, ty = cmd.get("x"), cmd.get("y")
                 tz = cmd.get("z") or 0
                 it = cmd.get("item_type") or cmd.get("item_name") or ""
@@ -1720,30 +1806,57 @@ def main():
                 last_take_key = memory.get("last_take_sent_key")
                 take_repeat = memory.get("take_repeat_count", 0)
                 if last_take_key == take_key and take_repeat >= MAX_TAKE_REPEAT_BEFORE_SKIP:
-                    cmd = {"action": "idle"}
                     memory["last_take_sent_key"] = None
                     memory["take_repeat_count"] = 0
-                    if log_full:
-                        print(f"[bridge] Override | take_item_from_container({take_key}) -> idle (deja envoye {take_repeat} fois)")
+                    forced_skip_count += 1
+                    if forced_skip_count < MAX_FORCED_SKIP:
+                        if log_full:
+                            print(f"[bridge] SKIP forcé | take_item boucle ({take_key}) [{forced_skip_count}/{MAX_FORCED_SKIP}]")
+                        time.sleep(args.interval)
+                        continue
+                    else:
+                        forced_skip_count = 0
+                        if log_full:
+                            print(f"[bridge] SKIP forcé max atteint pour take_item, on laisse passer pour que le LLM tranche")
             # Ne pas renvoyer le meme move_to d'affilee (evite boucle / rafale) ; garder last_written_move_to pour continuer a bloquer les re-envois
-            if cmd.get("action") == "move_to" and last_written_move_to:
+            # Exception : move_to d'approche depuis la file (is_approach_move_to) — toujours envoyer meme si meme cible
+            if not is_approach_move_to and cmd.get("action") == "move_to" and last_written_move_to:
                 try:
                     cx, cy = cmd.get("x"), cmd.get("y")
                     if cx is not None and cy is not None and (int(cx), int(cy)) == last_written_move_to:
-                        cmd = {"action": "idle"}
                         idle_was_duplicate_move_to = True
+                        forced_skip_count += 1
+                        if forced_skip_count < MAX_FORCED_SKIP:
+                            if log_full:
+                                print(f"[bridge] SKIP forcé | move_to dupliqué ({int(cx)},{int(cy)}) [{forced_skip_count}/{MAX_FORCED_SKIP}]")
+                            time.sleep(args.interval)
+                            continue
+                        else:
+                            forced_skip_count = 0
+                            cmd = {"action": "idle"}  # dernier recours apres MAX_FORCED_SKIP skips
+                            if log_full:
+                                print(f"[bridge] SKIP forcé max atteint pour move_to dupliqué, idle de deblocage")
                 except (TypeError, ValueError):
                     pass
             # Ne pas renvoyer move_to vers une cible deja en echec (pathfinding_stuck / timeout)
-            if cmd.get("action") == "move_to":
+            # Exception : move_to d'approche depuis la file — on tente quand meme (la file a deja ete validee par le LLM)
+            if not is_approach_move_to and cmd.get("action") == "move_to":
                 try:
                     cx, cy = cmd.get("x"), cmd.get("y")
                     if cx is not None and cy is not None:
                         move_key = f"{int(cx)},{int(cy)}"
                         if move_key in memory.get("recent_failed_move_targets", []):
-                            cmd = {"action": "idle"}
-                            if log_full:
-                                print(f"[bridge] Override | move_to({move_key}) -> idle (cible en echec recent)")
+                            forced_skip_count += 1
+                            if forced_skip_count < MAX_FORCED_SKIP:
+                                if log_full:
+                                    print(f"[bridge] SKIP forcé | move_to cible en echec ({move_key}) [{forced_skip_count}/{MAX_FORCED_SKIP}]")
+                                time.sleep(args.interval)
+                                continue
+                            else:
+                                forced_skip_count = 0
+                                cmd = {"action": "idle"}  # dernier recours apres MAX_FORCED_SKIP skips
+                                if log_full:
+                                    print(f"[bridge] SKIP forcé max atteint pour move_to cible en echec, idle de deblocage")
                 except (TypeError, ValueError):
                     pass
             # Si le joueur est deja a proximite de last_move_to_target (ex. fenetre) : forcer climb_through_window pour casser la boucle idle/move_to
@@ -1766,6 +1879,9 @@ def main():
                             print(f"[bridge] Override | idle -> climb_through_window({tx},{ty}) (joueur deja a la fenetre)")
             with open(cmd_path, "w", encoding="utf-8") as f:
                 json.dump(cmd, f)
+            # Reinitialiser le compteur de skips forces quand une vraie action (non-idle) est envoyee
+            if cmd.get("action") != "idle":
+                forced_skip_count = 0
             # Memoriser la commande envoyee pour verifier (au prochain tick) que la cible move_to est atteinte
             memory["last_sent_command"] = {"action": cmd.get("action")}
             if cmd.get("x") is not None:
@@ -1816,6 +1932,7 @@ def main():
                         memory["loot_repeat_count"] = 1
                     save_memory(memory_path, memory)
             # Memoire persistante : derniere action + objectif en cours (pour decisions logiques du LLM)
+            # Les actions idle ne sont pas logguees dans recent_actions (evite que le LLM les voie comme un pattern normal)
             action_name = cmd.get("action")
             entry = {"action": action_name}
             if action_name == "move_to":
@@ -1840,7 +1957,8 @@ def main():
             elif action_name == "idle":
                 memory["current_goal"] = None
             recent = list(memory.get("recent_actions", []))
-            recent.append(entry)
+            if action_name and action_name != "idle":
+                recent.append(entry)
             memory["recent_actions"] = recent[-MAX_RECENT_ACTIONS:]
             save_memory(memory_path, memory)
             pos = _safe_dict(obs.get("position"))

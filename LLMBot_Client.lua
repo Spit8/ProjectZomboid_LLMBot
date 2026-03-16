@@ -36,6 +36,19 @@ LLMBotLastMoveToTarget = nil
 LLMBotWalkToStartTick = nil
 LLMBotWalkToStartX = nil
 LLMBotWalkToStartY = nil
+-- Redirection fenetre persistante : quand move_to a ete redirige vers une fenetre (porte verrouillee),
+-- on conserve l'info jusqu'a ce que le joueur ait enjambe (climb_through_window) ou change de cible.
+-- { window = {x,y}, original_target = {x,y} }
+LLMBotWindowRedirectPending = nil
+-- Sequence fenetre auto en cours : true pendant WalkTo+smash+remove_glass+climb auto-enqueuee.
+-- Empeche le bridge d'interrompre avec un nouveau move_to.
+LLMBotWindowSequenceActive = false
+-- Cible de la sequence fenetre en attente (pour enfiler smash+remove_glass+climb une fois arrive)
+LLMBotWindowSequenceTarget = nil  -- { sq, obj, wx, wy }
+-- Fenetres en echec (inatteignables) : exclues des prochaines redirections jusqu'au prochain move_to different
+LLMBotFailedWindowKeys = LLMBotFailedWindowKeys or {}  -- { "x,y" = count }
+-- Derniere cible move_to originale (pour detecter changement de cible et reinitialiser LLMBotFailedWindowKeys)
+LLMBotLastMoveToOriginalTarget = nil
 
 -- ---------------------------------------------------------------
 -- 1. FICHIERS (Zomboid/Lua/)
@@ -777,6 +790,71 @@ local function buildObservation(player)
     fillContainersBuildingsIndoors(obs, player, cell, px, py, pz)
     fillActionQueueAndBusy(obs, player)
 
+    -- Sequence fenetre auto : surveiller l'arrivee pour enfiler smash+remove_glass+climb
+    if LLMBotWindowSequenceActive and LLMBotWindowSequenceTarget then
+        local t = LLMBotWindowSequenceTarget
+        local distW = math.abs(px - t.wx) + math.abs(py - t.wy)
+        if distW <= 2 and not obs.is_busy then
+            -- Joueur arrive : enfiler la sequence de cassage/enjambement
+            local wObj = t.winObj
+            -- Rafraichir l'etat de la fenetre (peut avoir change)
+            local wSq = t.winSq
+            local freshWinObj = nil
+            if wSq then
+                local objs2 = wSq:getObjects()
+                for i = 0, objs2:size() - 1 do
+                    local o = objs2:get(i)
+                    if o and (instanceof(o, "IsoWindow") or (instanceof(o, "IsoThumpable") and o:isWindow()) or instanceof(o, "IsoWindowFrame")) then
+                        freshWinObj = o
+                        break
+                    end
+                end
+            end
+            wObj = freshWinObj or wObj
+            if wObj then
+                if not (wObj.isSmashed and wObj:isSmashed()) then
+                    if ISSmashWindow then ISTimedActionQueue.add(ISSmashWindow:new(player, wObj, nil)) end
+                end
+                if not (wObj.isGlassRemoved and wObj:isGlassRemoved()) then
+                    if ISRemoveBrokenGlass then ISTimedActionQueue.add(ISRemoveBrokenGlass:new(player, wObj)) end
+                end
+                if ISClimbThroughWindow then
+                    if luautils and luautils.walkAdjWindowOrDoor then
+                        luautils.walkAdjWindowOrDoor(player, wSq, wObj)
+                    end
+                    ISTimedActionQueue.add(ISClimbThroughWindow:new(player, wObj, 0))
+                end
+                print("[LLMBot] sequence fenetre: smash+remove_glass+climb enfiles a l'arrivee (" .. t.wx .. "," .. t.wy .. ")")
+            else
+                print("[LLMBot] sequence fenetre: fenetre introuvable a l'arrivee, abandon")
+                LLMBotWindowSequenceActive = false
+            end
+            LLMBotWindowSequenceTarget = nil
+        elseif not obs.is_busy and distW > 2 then
+            -- Plus en marche, loin de la fenetre : abandonner seulement si le WalkTo est vraiment termine
+            -- (LLMBotLastMoveToTick assez ancien pour exclure le demarrage immediat)
+            local ticksSinceMove = LLMBotGlobalTick - (LLMBotLastMoveToTick or 0)
+            if ticksSinceMove > 10 then
+                local fkey = t.wx .. "," .. t.wy
+                LLMBotFailedWindowKeys[fkey] = (LLMBotFailedWindowKeys[fkey] or 0) + 1
+                print("[LLMBot] sequence fenetre abandonnee (not busy, dist=" .. distW .. ", ticks=" .. ticksSinceMove .. ") — fenetre " .. fkey .. " blacklistee")
+                LLMBotWindowSequenceActive = false
+                LLMBotWindowSequenceTarget = nil
+            end
+        end
+    elseif LLMBotWindowSequenceActive then
+        -- WalkTo termine (LLMBotWindowSequenceTarget nil mais flag actif) : sequence smash/climb en cours
+        if not obs.is_busy then
+            LLMBotWindowSequenceActive = false
+            print("[LLMBot] sequence fenetre terminee")
+        else
+            obs.window_sequence_active = true
+        end
+    end
+    if LLMBotWindowSequenceActive then
+        obs.window_sequence_active = true
+    end
+
     -- Si on est en train de marcher vers une cible et qu'une porte verrouillee bloque : interrompre et signaler au bridge pour que le LLM choisisse une fenetre
     if obs.current_action == "walking" and LLMBotLastMoveToTarget and LLMBotLastMoveToTarget.x and LLMBotLastMoveToTarget.y then
         local blocked = getPathfindingBlockedInfo(player, cell, LLMBotLastMoveToTarget.x, LLMBotLastMoveToTarget.y, pz)
@@ -922,10 +1000,17 @@ local function getRedirectToWindowIfLockedDoorInWay(player, cell, tx, ty, tz)
             and (dx ~= px or dy ~= py) and (dx ~= tx or dy ~= ty)
         if (playerNearDoor and targetOnOrAdjDoor and targetNotPlayer) or doorInBbox then
             table.sort(windows, function(a, b) return (a.dist or 999) < (b.dist or 999) end)
-            local w = windows[1]
-            if w and w.x and w.y then
-                return w.x, w.y
+            -- Exclure les fenetres en echec (inatteignables)
+            for _, w in ipairs(windows) do
+                if w.x and w.y then
+                    local wkey = w.x .. "," .. w.y
+                    if not (LLMBotFailedWindowKeys and LLMBotFailedWindowKeys[wkey] and LLMBotFailedWindowKeys[wkey] >= 2) then
+                        return w.x, w.y
+                    end
+                end
             end
+            -- Toutes les fenetres en echec : retourner nil (le bridge signalera pathfinding bloque)
+            print("[LLMBot] getRedirectToWindow: toutes les fenetres sont en echec, abandon redirection")
             return nil
         end
     end
@@ -946,11 +1031,13 @@ local function executeMoveTo(player, cmd)
     if dist == 0 then return end
     local cell = getCell() or (player.getCell and player:getCell())
     if not cell then print("[LLMBot] move_to: getCell indisponible") return end
-    -- Si la cible est de l'autre cote d'une porte verrouillee, rediriger le pathfinding vers une fenetre
-    local wx, wy = getRedirectToWindowIfLockedDoorInWay(player, cell, tx, ty, tz)
-    if wx and wy then
-        tx, ty = wx, wy
-        print("[LLMBot] move_to: redirection vers fenetre " .. tx .. "," .. ty .. " (porte verrouillee sur le trajet)")
+    -- Si la cible est de l'autre cote d'une porte verrouillee, le bridge le detectera via
+    -- getPathfindingBlockedInfo dans buildObservation (pendant la marche) et instruira le LLM.
+    -- On ne fait pas de detection preventive ici : trop de faux positifs (portes ouvertes, bbox trop large).
+    local targetKey = tx .. "," .. ty
+    if LLMBotLastMoveToOriginalTarget ~= targetKey then
+        LLMBotLastMoveToOriginalTarget = targetKey
+        LLMBotFailedWindowKeys = {}
     end
     -- Cible reelle (apres redirection eventuelle) pour que le bridge sache quand considerer "arrive"
     LLMBotLastMoveToTarget = { x = tx, y = ty }
@@ -993,14 +1080,20 @@ local function executeMoveTo(player, cmd)
         if typ:find("WalkTo") and cur.location then
             local lx, ly = cur.location:getX(), cur.location:getY()
             if lx == walkSquare:getX() and ly == walkSquare:getY() then
+                -- Prolonger is_busy pour eviter que le bridge ne renvoie une commande pendant qu'on marche encore
+                LLMBotLastMoveToTick = LLMBotGlobalTick
+                print("[LLMBot] move_to: deja en marche vers " .. lx .. "," .. ly .. " — LLMBotLastMoveToTick prolonge")
                 return
             end
         end
     end
     LLMBotLastMoveToTick = LLMBotGlobalTick
     ISTimedActionQueue.clear(player)
-    pcall(function() if player.setRunning and player:canSprint() then player:setRunning(true) end end)
+    pcall(function() if player.setSprinting then player:setSprinting(true) elseif player.setRunning and player:canSprint() then player:setRunning(true) end end)
     ISTimedActionQueue.add(LLMBotWalkToTimedAction:new(player, walkSquare))
+    -- Mettre a jour LLMBotLastMoveToTarget avec la case reelle (walkSquare), pas la cible redirectee,
+    -- pour que current_walk_target dans l'obs corresponde exactement a ou le joueur marche.
+    LLMBotLastMoveToTarget = { x = walkSquare:getX(), y = walkSquare:getY() }
     print("[LLMBot] move_to vers " .. walkSquare:getX() .. "," .. walkSquare:getY() .. " (cible " .. tx .. "," .. ty .. ") ok")
 end
 
@@ -1145,6 +1238,8 @@ local function executeClimbThroughWindow(player, cmd)
             luautils.walkAdjWindowOrDoor(player, window:getSquare(), window)
         end
         ISTimedActionQueue.add(ISClimbThroughWindow:new(player, window, 0))
+        LLMBotWindowRedirectPending = nil  -- redirection resolue : on a enjambe la fenetre
+        LLMBotWindowSequenceActive = false
         print("[LLMBot] climb_through_window " .. tx .. "," .. ty .. " ok")
     else
         print("[LLMBot] climb_through_window: pas de fenetre franchissable en (" .. tx .. "," .. ty .. ")")
@@ -1185,7 +1280,7 @@ local function executeLootContainer(player, cmd)
     end
     if not container then print("[LLMBot] loot_container: pas de conteneur a " .. tx .. "," .. ty) return end
     ISTimedActionQueue.clear(player)
-    pcall(function() if player.setRunning and player:canSprint() then player:setRunning(true) end end)
+    pcall(function() if player.setSprinting then player:setSprinting(true) elseif player.setRunning and player:canSprint() then player:setRunning(true) end end)
     if luautils and luautils.walkToContainer and not luautils.walkToContainer(container, player:getPlayerNum()) then
         -- Joueur trop loin : marcher vers une case adjacente au conteneur, puis reessayer au prochain cycle
         if walkToContainerSquare(player, tx, ty, tz) then
@@ -1308,7 +1403,57 @@ local function executeAttackNearest(player, cmd)
     if not c then return end
     local nearest, bestDist, zlist = nil, 999, c:getZombieList()
     for i = 0, zlist:size() - 1 do local z = zlist:get(i) local d = player:DistTo(z) if d < bestDist then bestDist = d nearest = z end end
-    if nearest and bestDist < 2.5 then ISTimedActionQueue.clear(player) ISTimedActionQueue.add(ISAttackTimedAction:new(player, nearest, false)) print("[LLMBot] attack_nearest dist=" .. math.floor(bestDist)) end
+    if nearest and bestDist < 2.5 then
+        ISTimedActionQueue.clear(player)
+        local attacked = false
+        -- Methode 1 : DoAttack (Build 42)
+        if not attacked then
+            pcall(function()
+                if player.DoAttack then
+                    player:DoAttack(0)
+                    attacked = true
+                end
+            end)
+        end
+        -- Methode 2 : ISAttackTimedAction (Build 41)
+        if not attacked and ISAttackTimedAction then
+            local ok, err = pcall(function()
+                ISTimedActionQueue.add(ISAttackTimedAction:new(player, nearest, false))
+                attacked = true
+            end)
+            if not ok then print("[LLMBot] ISAttackTimedAction erreur: " .. tostring(err)) end
+        end
+        -- Methode 2 : ISSwingTimedAction (Build 42+)
+        if not attacked then
+            pcall(function()
+                if ISSwingTimedAction then
+                    ISTimedActionQueue.add(ISSwingTimedAction:new(player, nearest))
+                    attacked = true
+                end
+            end)
+        end
+        -- Methode 3 : player:attack() direct
+        if not attacked then
+            pcall(function()
+                if player.attack then
+                    player:attack(nearest, false)
+                    attacked = true
+                end
+            end)
+        end
+        -- Methode 4 : forcer le joueur a viser et attaquer via setAttacking
+        if not attacked then
+            pcall(function()
+                if player.setAttackTarget then player:setAttackTarget(nearest) end
+                if player.setAttacking then player:setAttacking(true) attacked = true end
+            end)
+        end
+        if attacked then
+            print("[LLMBot] attack_nearest dist=" .. math.floor(bestDist))
+        else
+            print("[LLMBot] attack_nearest: aucune methode d'attaque disponible (dist=" .. math.floor(bestDist) .. ")")
+        end
+    end
 end
 
 local function executeSay(player, cmd)
@@ -1317,8 +1462,19 @@ end
 
 local function executeSprintToggle(player, cmd)
     pcall(function()
-        if player.setRunning then player:setRunning(not player:isRunning()) print("[LLMBot] sprint_toggle: " .. tostring(player:isRunning()))
-        elseif player.setVariable and player.getVariableBoolean then local cur = player:getVariableBoolean("IsRunning") player:setVariable("IsRunning", not cur) print("[LLMBot] sprint_toggle (var): " .. tostring(not cur)) end
+        if player.setSprinting then
+            local cur = false
+            if player.isSprinting then cur = player:isSprinting() end
+            player:setSprinting(not cur)
+            print("[LLMBot] sprint_toggle (setSprinting): " .. tostring(not cur))
+        elseif player.setRunning then
+            player:setRunning(not player:isRunning())
+            print("[LLMBot] sprint_toggle (setRunning): " .. tostring(player:isRunning()))
+        elseif player.setVariable and player.getVariableBoolean then
+            local cur = player:getVariableBoolean("IsRunning")
+            player:setVariable("IsRunning", not cur)
+            print("[LLMBot] sprint_toggle (var): " .. tostring(not cur))
+        end
     end)
 end
 
@@ -1503,8 +1659,47 @@ Events.OnTick.Add(function()
             end
             -- Quand is_busy, seules certaines actions peuvent s'executer (elles interrompent l'action en cours).
             -- move_to interrompt pour que la nouvelle destination soit toujours prise en compte (evite commandes perdues).
+            -- EXCEPTION : si une sequence fenetre auto est en cours, aucun move_to ne doit l'interrompre.
             local canInterruptWhenBusy = (cmd.action == "move_to" or cmd.action == "sprint_toggle" or cmd.action == "open_door" or cmd.action == "smash_window" or cmd.action == "remove_glass_window" or cmd.action == "climb_through_window")
-            if not result.is_busy or canInterruptWhenBusy then
+            -- Bloquer move_to pendant une sequence fenetre auto (evite ISTimedActionQueue.clear)
+            if LLMBotWindowSequenceActive and cmd.action == "move_to" then
+                LLMBotLastMoveToTick = LLMBotGlobalTick  -- prolonger is_busy
+                print("[LLMBot] move_to bloque : sequence fenetre auto en cours")
+                -- Garder le fichier cmd pour que le bridge attende
+                local ok2, result2 = pcall(buildObservation, player)
+                if ok2 and result2 then writeFile(LLMBot.OBS_FILE, LLMBot.toJSON(result2)) end
+                return
+            end
+            -- Detecter move_to vers case deja en cours (evite interruption/relance boucle)
+            local sameWalkToInProgress = false
+            if cmd.action == "move_to" then
+                local qtx, qty = tonumber(cmd.x), tonumber(cmd.y)
+                if qtx and qty then
+                    local cell2 = getCell()
+                    local pz2 = math.floor(getPlayer():getZ())
+                    local tSq = cell2 and cell2:getGridSquare(math.floor(qtx), math.floor(qty), pz2)
+                    local walkSq2 = tSq
+                    if tSq and AdjacentFreeTileFinder and AdjacentFreeTileFinder.Find then
+                        local adj = AdjacentFreeTileFinder.Find(tSq, player)
+                        if adj then walkSq2 = adj end
+                    end
+                    local qq = ISTimedActionQueue.queues and ISTimedActionQueue.queues[player]
+                    if qq and qq.queue and qq.queue[1] and walkSq2 then
+                        local cur2 = qq.queue[1]
+                        local typ2 = (cur2.Type and tostring(cur2.Type)) or ""
+                        if typ2:find("WalkTo") and cur2.location then
+                            if cur2.location:getX() == walkSq2:getX() and cur2.location:getY() == walkSq2:getY() then
+                                sameWalkToInProgress = true
+                                LLMBotLastMoveToTick = LLMBotGlobalTick  -- prolonger is_busy
+                                print("[LLMBot] move_to: WalkTo identique deja en cours (" .. cur2.location:getX() .. "," .. cur2.location:getY() .. ") — cmd conservee, LLMBotLastMoveToTick prolonge")
+                            end
+                        end
+                    end
+                end
+            end
+            if sameWalkToInProgress then
+                -- Ne pas supprimer le fichier cmd et ne pas executer : le bridge attendra
+            elseif not result.is_busy or canInterruptWhenBusy then
                 deleteFile(LLMBot.CMD_FILE)
                 executeCommand(player, cmd)
             else

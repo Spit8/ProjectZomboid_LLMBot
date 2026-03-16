@@ -1,0 +1,370 @@
+=== RECHERCHE APIs SPRINT/RUN dans C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid\media\lua ===
+
+---------- :Run\( ----------
+  TimedActionsTests.lua:1242  Tests[name]:run()
+
+---------- canSprint ----------
+  ISButtonPrompt.lua:625  elseif playerObj:isRunning() and playerObj:canSprint() then
+
+---------- isRunning ----------
+  DebugContextMenu.lua:1206  local ui = ISRunningDebugUI:new(0, 0, playerObj);
+  ISRunningDebugUI.lua:3  ISRunningDebugUI = ISCollapsableWindow:derive("ISRunningDebugUI");
+  ISRunningDebugUI.lua:10  function ISRunningDebugUI:createChildren()
+  ISRunningDebugUI.lua:21  self.start = ISButton:new(UI_BORDER_SPACING + 1, buttonY, btnWid, BUTTON_HGT, getText("IGUI_RunningDebug_TimerStart"), self, ISRunningDebugUI.startTrip);
+  ISRunningDebugUI.lua:30  self.restoreEnd = ISButton:new(self:getWidth() - btnWid - UI_BORDER_SPACING - 1, self.start.y, btnWid, BUTTON_HGT, getText("IGUI_RunningDebug_RestoreEndurance"), self, ISRunningDebugUI.restoreEndurance);
+  ISRunningDebugUI.lua:44  function ISRunningDebugUI:restoreEndurance()
+  ISRunningDebugUI.lua:48  function ISRunningDebugUI:update()
+  ISRunningDebugUI.lua:62  function ISRunningDebugUI:startTrip()
+  ISRunningDebugUI.lua:83  function ISRunningDebugUI:render()
+  ISRunningDebugUI.lua:129  function ISRunningDebugUI:new(x, y, character)
+  DailyValuesDebug.lua:211  if wp:isRunning() then
+  ThunderDebug.lua:153  if cloud:isRunning() then
+  WeatherPeriodDebug.lua:205  if not self.weatherPeriod or (self.weatherRunning and (not self.weatherPeriod:isRunning())) then
+  WeatherPeriodDebug.lua:212  if not self.weatherPeriod:isRunning() then
+  AiteronScenario.lua:87  if w:isRunning() then
+  FenrisScenario.lua:279  if w:isRunning() then
+  Multiplayer.lua:130  if w:isRunning() then
+  PatrickScenario.lua:103  if w:isRunning() then
+  Trailer1Scenario.lua:146  if w:isRunning() then
+  Trailer2Scenario.lua:199  if w:isRunning() then
+  Trailer2_LimpWPScenario.lua:168  if w:isRunning() then
+  Trailer2_PoliceScenario.lua:150  if w:isRunning() then
+  Trailer3Scenario.lua:297  if w:isRunning() then
+  Trailer3Scenario_Arrival.lua:145  if w:isRunning() then
+  Trailer3Scenario_Building.lua:163  if w:isRunning() then
+  Trailer3Scenario_Fishing.lua:158  --          if w:isRunning() then
+  Trailer3Scenario_GasStation.lua:157  if w:isRunning() then
+  Trailer3Scenario_Roadtrip.lua:145  if w:isRunning() then
+  ISWidgetCraftLogicControl.lua:225  self.buttonCancel.enable = self.logic:getCraftLogic():isRunning();
+  ISWidgetCraftLogicControl.lua:243  if self.logic:getCraftLogic():isRunning() then
+  ISWidgetRecipeSelect.lua:84  if self.craftProcessor:isRunning() then
+  DebugDemoTime.lua:24  priv.isRunning                  = true;
+  ISBaseIcon.lua:696  return ((self.character:isRunning() or self.character:isSprinting()) and self.character:isPlayerMoving());
+  ISSearchManager.lua:1105  if (self.character:isRunning() or self.character:isSprinting() and self.character:isJustMoved()) then
+  ISButtonPrompt.lua:625  elseif playerObj:isRunning() and playerObj:canSprint() then
+  ISAdmPanelWeather.lua:107  if (not wp) or (not wp:isRunning()) then
+  ISAdmPanelWeather.lua:114  if (not wp) or (not wp:isRunning()) then
+  ISMicrowaveUI.lua:73  if self.oven:isRunningFor() > 0 then
+  ISMicrowaveUI.lua:74  self.timerKnob:setKnobPosition(math.ceil((self.oven:getTimer() - self.oven:isRunningFor()) / 60));
+  ISOvenUI.lua:105  if self.oven:isRunningFor() > 0 then
+  ISOvenUI.lua:106  self.timerKnob:setKnobPosition(math.ceil((self.oven:getTimer() - self.oven:isRunningFor()) / 60));
+  InviteFriends.lua:338  self.isCoopHost = CoopServer:isRunning()
+  ISScoreboard.lua:38  ISScoreboard.isAdmin = canModifyPlayerScoreboard() or CoopServer:isRunning();
+  Steps.lua:1995  local complete = getPlayer():isSprinting() or getPlayer():isRunning();
+  Tutorial1.lua:184  if w:isRunning() then
+  ISPickDungCursor.lua:51  function ISPickDungCursor:isRunningAction()
+  ISPickDungCursor.lua:77  if self:isRunningAction() then return end
+  ISScytheGrassCursor.lua:51  function ISScytheGrassCursor:isRunningAction()
+  ISScytheGrassCursor.lua:77  if self:isRunningAction() then return end
+  ISExtinguishCursor.lua:57  function ISExtinguishCursor:isRunningAction()
+  ISExtinguishCursor.lua:83  if self:isRunningAction() then return end
+  XpUpdate.lua:14  if (player:IsRunning() or player:isSprinting()) and player:getStats():get(CharacterStat.ENDURANCE) > player:getStats():getEnduranceWarning() then
+  forageSystem.lua:1714  if _character:isRunning() then
+  LuaNet.lua:35  if self_LuaNet.isRunning() then
+  LuaNet.lua:97  if self_LuaNet.isRunning() then --and self_commands[ _command ] then
+  LuaNet.lua:130  if self_debug then print( "LuaNet: Not running or command not found -> ", self_LuaNet.isRunning(), _command ); end
+  LuaNet.lua:177  -- isRunning
+  LuaNet.lua:180  function self.isRunning()
+
+---------- isSprinting ----------
+  ISBaseIcon.lua:696  return ((self.character:isRunning() or self.character:isSprinting()) and self.character:isPlayerMoving());
+  ISSearchManager.lua:1105  if (self.character:isRunning() or self.character:isSprinting() and self.character:isJustMoved()) then
+  ISButtonPrompt.lua:622  if playerObj:isSprinting() then
+  Steps.lua:1995  local complete = getPlayer():isSprinting() or getPlayer():isRunning();
+  XpUpdate.lua:14  if (player:IsRunning() or player:isSprinting()) and player:getStats():get(CharacterStat.ENDURANCE) > player:getStats():getEnduranceWarning() then
+  forageSystem.lua:1716  elseif _character:isSprinting() then
+
+---------- Run\b ----------
+  ISFMODEventPlayerPanel.lua:14  table.insert(PARAMETERS, { name = "CharacterMovementSpeed", type = "combo", values = { "SneakWalk", "SneakRun", "Strafe", "Walk", "Run", "Sprint" } })
+  PopupColorEdit.lua:28  PopupColorEdit.instance.firstRun = true;
+  PopupColorEdit.lua:278  if self.firstRun then
+  PopupColorEdit.lua:279  self.firstRun = false;
+  WeatherPeriodDebug.lua:207  self.clearOnNextRun = true;
+  WeatherPeriodDebug.lua:216  if self.clearOnNextRun then
+  WeatherPeriodDebug.lua:222  self.clearOnNextRun = false;
+  UnitTestsTimedActionsPanel.lua:39  y2,runButton = ISDebugUtils.addButton(self, { id = "run", name=name }, x+nameWidth, y, (UI_BORDER_SPACING*2)+getTextManager():MeasureStringX(UIFont.Small, getText("IGUI_UnitTests_Run")), BUTTON_HGT, getText("IGUI_UnitTests_Run"), UnitTestsTimedActionsPanel.onRunOneButtonClick);
+  InterpolationPeriodDebug.lua:210  if self.clearOnNextRun then
+  InterpolationPeriodDebug.lua:214  self.clearOnNextRun = false;
+  InterpolationPlayerPeriodDebug.lua:220  if self.clearOnNextRun then
+  InterpolationPlayerPeriodDebug.lua:224  self.clearOnNextRun = false;
+  MusicChoices.lua:244  file="OldMusic_run",
+  MusicChoices.lua:509  file="NewMusic_Overrun",
+  MusicChoices.lua:794  file="NewMusic_Run",
+  CharacterCreationAvatar.lua:44  self.animCombo:addOptionWithData(getText("IGUI_anim_Run"), "EventRun")
+  MainOptions.lua:2405  if v.value == "Run" then
+  MainOptions.lua:2406  -- RUN KEY TOGGLE
+  MainOptions.lua:2413  toggleToRunTickbox:addOption(getText("IGUI_ToggleToRun", getKeyName(getCore():getKey("Run"))))
+  MainOptions.lua:2417  gameOption = GameOption:new('toggleToRun', toggleToRunTickbox)
+  MainOptions.lua:2420  box:setSelected(1,getCore():isToggleToRun())
+  MainOptions.lua:2421  local runKeyName = getKeyName(getCore():getKey("Run"))
+  MainOptions.lua:2422  box.options[1] = getText("IGUI_ToggleToRun", runKeyName)
+  MainOptions.lua:2427  getCore():setToggleToRun(box.selected[1])
+  MainOptions.lua:2444  local runKeyName = getKeyName(getCore():getKey("Run"))
+  MainOptions.lua:4115  if name == "Run" then
+  MainOptions.lua:4116  local gameOption = gameOptions:get("toggleToRun")
+  MainOptions.lua:4117  gameOption.control.options[1] = getText("IGUI_ToggleToRun", getKeyName(key))
+  ISRadioAction.lua:184  o.stopOnRun         = true;
+  TimedActionsTests.lua:98  run = function(self)
+  TimedActionsTests.lua:107  run = function(self)
+  TimedActionsTests.lua:121  run = function(self)
+  TimedActionsTests.lua:134  run = function(self)
+  TimedActionsTests.lua:148  run = function(self)
+  TimedActionsTests.lua:158  run = function(self)
+  TimedActionsTests.lua:170  run = function(self)
+  TimedActionsTests.lua:183  run = function(self)
+  TimedActionsTests.lua:193  run = function(self)
+  TimedActionsTests.lua:204  run = function(self)
+  TimedActionsTests.lua:216  run = function(self)
+  TimedActionsTests.lua:228  run = function(self)
+  TimedActionsTests.lua:240  run = function(self)
+  TimedActionsTests.lua:256  run = function(self)
+  TimedActionsTests.lua:269  run = function(self)
+  TimedActionsTests.lua:281  run = function(self)
+  TimedActionsTests.lua:295  run = function(self)
+  TimedActionsTests.lua:305  run = function(self)
+  TimedActionsTests.lua:318  run = function(self)
+  TimedActionsTests.lua:329  run = function(self)
+  TimedActionsTests.lua:341  run = function(self)
+  TimedActionsTests.lua:353  run = function(self)
+  TimedActionsTests.lua:367  run = function(self)
+  TimedActionsTests.lua:380  run = function(self)
+  TimedActionsTests.lua:392  run = function(self)
+  TimedActionsTests.lua:405  run = function(self)
+  TimedActionsTests.lua:417  run = function(self)
+  TimedActionsTests.lua:429  run = function(self)
+  TimedActionsTests.lua:440  run = function(self)
+  TimedActionsTests.lua:452  run = function(self)
+  TimedActionsTests.lua:465  run = function(self)
+  TimedActionsTests.lua:477  run = function(self)
+  TimedActionsTests.lua:488  run = function(self)
+  TimedActionsTests.lua:503  run = function(self)
+  TimedActionsTests.lua:516  run = function(self)
+  TimedActionsTests.lua:530  run = function(self)
+  TimedActionsTests.lua:544  run = function(self)
+  TimedActionsTests.lua:558  run = function(self)
+  TimedActionsTests.lua:566  run = function(self)
+  TimedActionsTests.lua:578  run = function(self)
+  TimedActionsTests.lua:590  run = function(self)
+  TimedActionsTests.lua:601  run = function(self)
+  TimedActionsTests.lua:614  run = function(self)
+  TimedActionsTests.lua:627  run = function(self)
+  TimedActionsTests.lua:639  run = function(self)
+  TimedActionsTests.lua:652  run = function(self)
+  TimedActionsTests.lua:665  run = function(self)
+  TimedActionsTests.lua:675  run = function(self)
+  TimedActionsTests.lua:687  run = function(self)
+  TimedActionsTests.lua:704  run = function(self)
+  TimedActionsTests.lua:723  run = function(self)
+  TimedActionsTests.lua:741  run = function(self)
+  TimedActionsTests.lua:757  run = function(self)
+  TimedActionsTests.lua:774  run = function(self)
+  TimedActionsTests.lua:791  run = function(self)
+  TimedActionsTests.lua:808  run = function(self)
+  TimedActionsTests.lua:831  run = function(self)
+  TimedActionsTests.lua:846  run = function(self)
+  TimedActionsTests.lua:859  run = function(self)
+  TimedActionsTests.lua:870  run = function(self)
+  TimedActionsTests.lua:883  run = function(self)
+  TimedActionsTests.lua:897  run = function(self)
+  TimedActionsTests.lua:911  run = function(self)
+  TimedActionsTests.lua:930  run = function(self)
+  TimedActionsTests.lua:943  run = function(self)
+  TimedActionsTests.lua:957  run = function(self)
+  TimedActionsTests.lua:971  run = function(self)
+  TimedActionsTests.lua:986  run = function(self)
+  TimedActionsTests.lua:999  run = function(self)
+  TimedActionsTests.lua:1012  run = function(self)
+  TimedActionsTests.lua:1026  run = function(self)
+  TimedActionsTests.lua:1041  run = function(self)
+  TimedActionsTests.lua:1057  run = function(self)
+  TimedActionsTests.lua:1073  run = function(self)
+  TimedActionsTests.lua:1087  run = function(self)
+  TimedActionsTests.lua:1106  run = function(self)
+  TimedActionsTests.lua:1120  run = function(self)
+  TimedActionsTests.lua:1134  run = function(self)
+  TimedActionsTests.lua:1156  run = function(self)
+  TimedActionsTests.lua:1173  run = function(self)
+  TimedActionsTests.lua:1188  run = function(self)
+  TimedActionsTests.lua:1200  run = function(self)
+  TimedActionsTests.lua:1212  local testsToRun = {}
+  TimedActionsTests.lua:1242  Tests[name]:run()
+  TimedActionsTests.lua:1280  if #testsToRun == 0 then
+  TimedActionsTests.lua:1285  local testName = testsToRun[1]
+  TimedActionsTests.lua:1286  table.remove(testsToRun, 1)
+  TimedActionsTests.lua:1297  table.insert(testsToRun, name)
+  TimedActionsTests.lua:1305  table.wipe(testsToRun)
+  TimedActionsTests.lua:1307  table.insert(testsToRun, name)
+  TimedActionsTests.lua:1316  table.wipe(testsToRun)
+  ISClimbOverFence.lua:67  o.stopOnRun = false;
+  ISDetachItemHotbar.lua:64  o.stopOnRun = true;
+  ISDigStairsAction.lua:43  o.stopOnRun = true;
+  ISGrabItemAction.lua:186  o.stopOnRun = true;
+  ISInventoryTransferAction.lua:769  -- o.stopOnRun = o.destContainer:getType() ~= "floor";
+  ISInventoryTransferAction.lua:774  o.stopOnRun = true;
+  ISQueueActionsAction.lua:43  o.stopOnRun = false
+  WalkToTimedAction.lua:86  o.stopOnRun = false;
+  WalkToTimedActionF.lua:85  o.stopOnRun = false;
+  Steps.lua:206  getPlayer():setAllowRun(false);
+  Steps.lua:278  getPlayer():setAllowRun(false);
+  Steps.lua:283  getPlayer():setAllowRun(true);
+  Steps.lua:300  local shiftKey = getKeyName(getCore():getKey("Run"))
+  Steps.lua:376  getPlayer():setAllowRun(false);
+  Steps.lua:1448  getPlayer():setAllowRun(true);
+  Steps.lua:1488  self:addMessage(getText("IGUI_Tutorial1_Bandage1", getKeyName(getCore():getKey("Run")), Tutorial1.moveKeys), getCore():getScreenWidth()/2, getCore():getScreenHeight()/5, 500, 110, false, BandageStep.Vault);
+  Steps.lua:1513  if not BandageStep.runned and isKeyDown(getCore():getKey("Run")) then
+  Steps.lua:1861  getPlayer():setAllowRun(true);
+  Steps.lua:1906  sprintText = getText("IGUI_Tutorial1_Shotgun5a", Tutorial1.moveKeys, getKeyName(getCore():getKey("Run")))
+  ISEnterVehicle.lua:98  o.stopOnRun = false
+  ISPathFindAction.lua:102  o.stopOnRun = false
+  ISPathFindAction.lua:112  o.stopOnRun = false
+  ISPathFindAction.lua:122  o.stopOnRun = false
+  ISPathFindAction.lua:132  o.stopOnRun = false
+  ISPathFindAction.lua:142  o.stopOnRun = false
+  ISPathFindAction.lua:152  o.stopOnRun = false
+  ISPathFindAction.lua:162  o.stopOnRun = false
+  ISHealthPanel.lua:1006  o.stopOnRun = true
+  ISMoveableCursor.lua:47  if getCore():isKey("Run", _key) then
+  ProceduralDistributions.lua:42186  -- Still a decent stash left but starting to run thin. Herbal remedies are now being used due to shortages.
+  XpUpdate.lua:226  -- then Fitness skill, grant you some traits that gonna help you to run faster, recovery faster, etc..
+  keyBinding.lua:28  bind.value = "Run";
+  ISAddFuelAction.lua:87  o.stopOnRun = true;
+  ISLightFromKindle.lua:166  o.stopOnRun = true;
+  ISRemoveCampfireAction.lua:66  o.stopOnRun = true;
+  AnimalGenomeDefinitions.lua:79  AnimalGenomeDefinitions.geneticDisorder["slowWalking"] = "slowWalking"; -- animal will have a regular problem to one of its leg, making it walk really slow/impossible to run
+  ChickenDefinitions.lua:114  --AnimalDefinitions.animals["hen"].periodicRun = true;
+  ChickenDefinitions.lua:277  run = { name = "AnimalFootstepsChickenRun" },
+  ChickenDefinitions.lua:294  run = { name = "AnimalFootstepsChickRun" },
+  CowDefinitions.lua:149  AnimalDefinitions.animals["cowcalf"].periodicRun = true; -- sometimes a calf will run, never far from mom, just to train its legs?
+  CowDefinitions.lua:323  run = { name = "AnimalFootstepsBullRun" },
+  CowDefinitions.lua:342  run = { name = "AnimalFootstepsCalfRun" },
+  CowDefinitions.lua:361  run = { name = "AnimalFootstepsCowRun" },
+  DeerDefinitions.lua:186  run = { name = "AnimalFootstepsBuckRun" },
+  DeerDefinitions.lua:202  run = { name = "AnimalFootstepsDoeRun" },
+  DeerDefinitions.lua:218  run = { name = "AnimalFootstepsFawnRun" },
+  MouseDefinitions.lua:251  runloop = { name = "AnimalFootstepsMouseRun", slot = "runloop" },
+  PigDefinitions.lua:119  AnimalDefinitions.animals["piglet"].periodicRun = true;
+  PigDefinitions.lua:296  run = { name = "AnimalFootstepsBoarRun" },
+  PigDefinitions.lua:314  run = { name = "AnimalFootstepsPigletRun" },
+  PigDefinitions.lua:332  run = { name = "AnimalFootstepsSowRun" },
+  RabbitDefinitions.lua:134  AnimalDefinitions.animals["rabkitten"].periodicRun = true;
+  RabbitDefinitions.lua:266  runloop = { name = "AnimalFootstepsRabbitRun", slot = "runloop" },
+  RabbitDefinitions.lua:288  runloop = { name = "AnimalFootstepsBabyRabbitRun", slot = "runloop" },
+  RaccoonDefinitions.lua:219  runloop = { name = "AnimalFootstepsBabyRaccoonRun", slot = "runloop" },
+  RaccoonDefinitions.lua:234  runloop = { name = "AnimalFootstepsRaccoonRun", slot = "runloop" },
+  RatDefinitions.lua:239  runloop = { name = "AnimalFootstepsRatRun", slot = "runloop" },
+  SheepDefinitions.lua:173  AnimalDefinitions.animals["lamb"].periodicRun = true;
+  SheepDefinitions.lua:358  run = { name = "AnimalFootstepsSheepRun" },
+  SheepDefinitions.lua:378  run = { name = "AnimalFootstepsLambRun" },
+  TurkeyDefinitions.lua:262  run = { name = "AnimalFootstepsTurkeyRun" },
+  TurkeyDefinitions.lua:280  run = { name = "AnimalFootstepsTurkeyPoultRun" },
+  ISCraftAnimAction.lua:107  o.stopOnRun = true;
+  ISGenericCraftStart.lua:70  o.stopOnRun = true;
+  ISHandcraftAction.lua:405  o.stopOnRun = true;
+  ISStartCraftProcessorAction.lua:71  o.stopOnRun = true;
+  ISAddWaterToTrough.lua:150  o.stopOnRun = true
+  ISEmptyWaterInTrough.lua:59  o.stopOnRun = true
+  ISForageAction.lua:124  o.stopOnRun = true;
+  recorded_media.lua:1890  -- Media: VHS: Man on the Run [id: e50928ac-f472-43d9-bae0-2c27e3187567]
+  ISApplyBandage.lua:164  o.stopOnRun = true;
+  ISApplyMakeUp.lua:68  o.stopOnRun = true
+  ISAttachItemHotbar.lua:110  o.stopOnRun = true;
+  ISBaseTimedAction.lua:176  o.stopOnRun = true;
+  ISCraftAction.lua:166  o.stopOnRun = recipe:isStopOnRun();
+  ISDeviceBatteryAction.lua:59  o.stopOnRun         = true;
+  ISDeviceMediaAction.lua:41  o.stopOnRun         = true;
+  ISDisinfect.lua:119  o.stopOnRun = true;
+  ISDrinkFluidAction.lua:131  o.stopOnRun = true;
+  ISDrinkFromBottle.lua:130  o.stopOnRun = true;
+  ISDropVehicleItemAction.lua:131  o.stopOnRun = false;
+  ISDropWorldItemAction.lua:167  o.stopOnRun = false;
+  ISDumpContentsAction.lua:111  o.stopOnRun = false;
+  ISDumpWaterAction.lua:143  o.stopOnRun = false;
+  ISEatFoodAction.lua:300  o.stopOnRun = true;
+  ISEjectMagazine.lua:107  o.stopOnRun = true
+  ISEquipWeaponAction.lua:284  o.stopOnRun = true;
+  ISGetOnBedAction.lua:195  o.stopOnRun = true
+  ISHurricaneLanternExtinguish.lua:62  o.stopOnRun = false;
+  ISInsertMagazine.lua:142  o.stopOnRun = true
+  ISLitCandleExtinguish.lua:61  o.stopOnRun = false;
+  ISLoadBulletsInMagazine.lua:162  o.stopOnRun = true
+  ISOpenCloseDoor.lua:43  o.stopOnRun = false;
+  ISOpenCloseLid.lua:78  o.stopOnRun = true;
+  ISPickupDung.lua:80  o.stopOnRun = true;
+  ISRackFirearm.lua:206  o.stopOnRun = true
+  ISReloadWeaponAction.lua:292  o.stopOnRun = true;
+  ISStopAlarmClockAction.lua:45  o.stopOnRun = true;
+  ISTakeBricks.lua:69  o.stopOnRun = true;
+  ISTakePillAction.lua:99  o.stopOnRun = true;
+  ISToggleLightAction.lua:43  o.stopOnRun = false
+  ISUnequipAction.lua:167  o.stopOnRun = true;
+  ISUnloadBulletsFromFirearm.lua:129  o.stopOnRun = true
+  ISUnloadBulletsFromMagazine.lua:146  o.stopOnRun = true
+  ISWaitWhileGettingUp.lua:70  o.stopOnRun = false
+  ISWearClothing.lua:165  o.stopOnRun = true;
+  ISFeedAnimalFromHand.lua:67  o.stopOnRun = true;
+  ISAddBaitAction.lua:69  o.stopOnRun = false
+  ISCheckTrapAction.lua:57  o.stopOnRun = false
+  ISRemoveBaitAction.lua:58  o.stopOnRun = false
+  ISRemoveTrapAction.lua:61  o.stopOnRun = false
+  ISCloseVehicleDoor.lua:100  o.stopOnRun = false
+  ISDeflateTire.lua:83  o.stopOnRun = true
+  ISHotwireVehicle.lua:53  o.stopOnRun = false
+  ISInflateTire.lua:89  o.stopOnRun = true
+  ISLockDoors.lua:79  o.stopOnRun = false
+  ISLockVehicleDoor.lua:59  o.stopOnRun = false
+  ISOpenCloseVehicleWindow.lua:66  o.stopOnRun = false
+  ISOpenVehicleDoor.lua:147  o.stopOnRun = false
+  ISRefuelFromGasPump.lua:110  o.stopOnRun = true
+  ISRemoveBurntVehicle.lua:190  o.stopOnRun = false
+  ISShutOffVehicleEngine.lua:49  o.stopOnRun = false
+  ISSmashVehicleWindow.lua:77  o.stopOnRun = false
+  ISStartVehicleEngine.lua:53  o.stopOnRun = false
+  ISUnlockVehicleDoor.lua:87  o.stopOnRun = false
+  ISWashVehicle.lua:241  o.stopOnRun = false
+
+---------- setSprinting ----------
+  Steps.lua:2162  getPlayer():setSprinting(false);
+
+---------- Sprint\b ----------
+  ISFMODEventPlayerPanel.lua:14  table.insert(PARAMETERS, { name = "CharacterMovementSpeed", type = "combo", values = { "SneakWalk", "SneakRun", "Strafe", "Walk", "Run", "Sprint" } })
+  ISButtonPrompt.lua:623  self:setBPrompt(getText("IGUI_StopSprint"), nil)
+  ISButtonPrompt.lua:625  elseif playerObj:isRunning() and playerObj:canSprint() then
+  ISButtonPrompt.lua:626  self:setBPrompt(getText("IGUI_StartSprint"), nil)
+  ISUI3DModel.lua:108  -- AnimSet state: idle, sprint, etc
+  MainOptions.lua:2423  self.gameOptions:get("dblTapRunToSprint").control.options[1] = getText("UI_optionscreen_DblTapRunToSprint", runKeyName)
+  MainOptions.lua:2436  if v.value == "Sprint" then
+  MainOptions.lua:2439  local tblTapSprint = ISTickBox:new(x + UI_BORDER_SPACING, y+self.addY, BUTTON_HGT, BUTTON_HGT, "");
+  MainOptions.lua:2440  tblTapSprint.selected[1] = getCore():isOptiondblTapJogToSprint();
+  MainOptions.lua:2441  self.sprintBtn.enable = not getCore():isOptiondblTapJogToSprint();
+  MainOptions.lua:2442  tblTapSprint.choicesColor = {r=1, g=1, b=1, a=1};
+  MainOptions.lua:2443  tblTapSprint:initialise();
+  MainOptions.lua:2445  tblTapSprint:addOption(getText("UI_optionscreen_DblTapRunToSprint", runKeyName), "");
+  MainOptions.lua:2446  tblTapSprint.tooltip = getText("UI_optionscreen_DblTapRunToSprintTooltip", runKeyName, runKeyName):gsub("\\n", "\n");
+  MainOptions.lua:2447  self.mainPanel:addChild(tblTapSprint);
+  MainOptions.lua:2448  self.mainPanel:insertNewLineOfButtons(tblTapSprint)
+  MainOptions.lua:2451  gameOption = GameOption:new('dblTapRunToSprint', tblTapSprint)
+  MainOptions.lua:2454  box:setSelected(1,getCore():isOptiondblTapJogToSprint())
+  MainOptions.lua:2461  getCore():setOptiondblTapJogToSprint(box.selected[1])
+  MainOptions.lua:2465  tblTapSprint.isLeftColumn = left
+  MainOptions.lua:2466  table.insert(self.keyTickBoxes, tblTapSprint)
+  MainOptions.lua:2468  -- SPRINT KEY TOGGLE
+  MainOptions.lua:2474  toggleToSprintTickbox:addOption(getText("IGUI_ToggleToSprint", getKeyName(getCore():getKey("Sprint"))))
+  MainOptions.lua:2478  gameOption = GameOption:new('toggleToSprint', toggleToSprintTickbox)
+  MainOptions.lua:2481  box:setSelected(1,getCore():isToggleToSprint())
+  MainOptions.lua:2482  box.options[1] = getText("IGUI_ToggleToSprint", getKeyName(getCore():getKey("Sprint")))
+  MainOptions.lua:2486  getCore():setToggleToSprint(box.selected[1])
+  MainOptions.lua:4118  gameOption = gameOptions:get("dblTapRunToSprint")
+  MainOptions.lua:4119  gameOption.control.options[1] = getText("UI_optionscreen_DblTapRunToSprint", getKeyName(key))
+  MainOptions.lua:4125  if name == "Sprint" then
+  MainOptions.lua:4126  local gameOption = gameOptions:get("toggleToSprint")
+  MainOptions.lua:4127  gameOption.control.options[1] = getText("IGUI_ToggleToSprint", getKeyName(key))
+  MainScreen.lua:739  self.threeD:setState("sprint")
+  Steps.lua:207  getPlayer():setAllowSprint(false);
+  Steps.lua:279  getPlayer():setAllowSprint(false);
+  Steps.lua:1903  local sprintText = getText("IGUI_Tutorial1_Shotgun5", Tutorial1.moveKeys, getKeyName(getCore():getKey("Sprint")))
+  Steps.lua:1904  if getCore():getKey("Sprint") == 0 then
+  Steps.lua:1905  if getCore():isOptiondblTapJogToSprint() then
+  Steps.lua:1908  -- impossible to sprint
+  Steps.lua:1993  getPlayer():setAllowSprint(true);
+  Tutorial1.lua:313  getPlayer():setAllowSprint(false);
+  keyBinding.lua:36  bind.value = "Sprint";
