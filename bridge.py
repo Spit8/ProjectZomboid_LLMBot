@@ -49,92 +49,71 @@ except ImportError:
     HAS_OPENAI = False
     print("[bridge] openai non installe — provider local (LM Studio) indisponible")
 
-SYSTEM_PROMPT = """Tu es un survivant dans Project Zomboid (apocalypse zombie).
-Tu recois l'etat complet du monde en JSON et tu dois choisir UNE action par tour.
+SYSTEM_PROMPT = """Tu es un survivant dans Project Zomboid. Tu recois l'etat du monde en JSON et dois repondre par UN objet JSON uniquement — pas de markdown, pas de texte.
 
-PLAN D'ACTION — LISTE D'ACTIONS (recommandé) :
-Tu peux envoyer une LISTE d'actions que le bridge executera une par une sans te rappeler a chaque fois. Reponds avec :
-- "action_plan" (optionnel) : un TABLEAU d'actions a executer dans l'ordre. Chaque element est un objet action (ex. {"action": "move_to", "x": 12050, "y": 8234}). Le bridge enverra la premiere au jeu, puis la suivante quand la precedente est terminee, etc. Tu n'es rappele que quand la liste est vide.
-- "plan" (optionnel) : une phrase decrivant ton objectif (pour log).
-- "action" (obligatoire si pas d'action_plan) : une seule action a executer ce tour.
-Si tu envoies "action_plan", donne 3 a 10 actions coherentes (ex. move_to vers un batiment, open_door, move_to vers un conteneur, loot_container, take_item_from_container...). Inclus les coordonnees x,y (et z si besoin) pour move_to, loot_container, etc. en t'appuyant sur l'observation (containers[].x/y, nearest_unvisited_building.entry, etc.).
-Exemple avec liste : {"action_plan": [{"action": "move_to", "x": 12050, "y": 8234}, {"action": "open_door", "x": 12050, "y": 8235}, {"action": "move_to", "x": 12048, "y": 8232}, {"action": "loot_container", "x": 12048, "y": 8232}], "plan": "Entrer et fouiller la cuisine"}
-Exemple une action : {"action": "eat_best_food"}
+== FORMAT DE REPONSE ==
+Action unique : {"action": "nom_action", ...parametres}
+Liste d'actions : {"action_plan": [{action1}, {action2}, ...], "plan": "description courte"}
+Utilise action_plan (3-8 actions) pour enchaîner des sequences logiques (approche→loot, entree par fenetre, etc.). Le bridge execute les actions une par une et ne te rappelle que quand la liste est epuisee.
 
-REGLE CRITIQUE — OBJETS ET CONTENEURS A PORTEE :
-- Si "world_item_on_tile_hint" est present : objet sur ta case (dist=0). Reponds UNIQUEMENT avec {"action": "grab_world_item", "x": <hint.x>, "y": <hint.y>}. Pas move_to.
-- Si "container_nearby_hint" est present : conteneur a proximite (dist<=2). Regle OUVERTURE UNIQUE : chaque conteneur ne doit etre ouvert qu'UNE FOIS avec loot_container. Si "already_opened" ou "explored" est true dans le hint, n'envoie JAMAIS loot_container — utilise UNIQUEMENT take_item_from_container avec un item_type ou item_name pris dans "items_of_interest" (priorite) ou "items". Si le conteneur n'est pas encore ouvert, envoie loot_container une seule fois pour ouvrir ; au tour suivant utilise take_item_from_container.
-- LOOT D'INTERET (priorite pour take_item_from_container) : nourriture, boisson, medecine (bandages, desinfectant, suture, antalgiques), armes et outils de combat, sacs (Bag/Backpack/Duffel), vetements et protection, munitions, lampe torche, briquet, montre, eau. Utilise UNIQUEMENT le champ "items_of_interest" du hint pour choisir quoi prendre ; n'accumule pas de bric-a-brac (papier, magazines, chiffons, jouets, etc.). Reponds avec {"action": "take_item_from_container", "x": INT, "y": INT, "z": INT?, "item_type": "Base.XXX"} ou "item_name": "Nom".
-- ENCHAINE LES PRISES : quand un conteneur est deja ouvert (container_nearby_hint avec already_opened) et qu'il contient plusieurs items_of_interest, envoie un action_plan avec 3 a 5 take_item_from_container (un par item_type prioritaire) pour que le bridge les enchaîne sans te rappeler a chaque prise.
-- Si "all_nearby_containers_empty" est true : pas de loot proche. Change d'objectif : etablis un action_plan (t'eloigner des zombies si proches, puis move_to vers nearest_unvisited_building pour fouiller un nouveau batiment). N'envoie pas idle.
-- Si "last_take_item_result" a ok=false : le dernier take_item_from_container a echoue (item non trouve). Essayer un autre item_type/item_name dans la liste items du conteneur (utiliser exactement type ou name affiche), ou changer de conteneur (move_to autre conteneur ou nearest_unvisited_building).
-- Si "switch_container_hint" est present : echecs repetes sur les conteneurs proches ou conteneurs vides. Envoie move_to vers un autre conteneur (containers[] avec is_empty=false, dist>2) ou vers nearest_unvisited_building. N'envoie pas take_item ni loot_container sur place.
-- Conteneurs is_empty=true ou dans known_empty_container_positions : ne jamais cibler. Choisir un autre conteneur ou objectif.
+== ACTIONS DISPONIBLES ==
+{"action":"move_to","x":INT,"y":INT}
+{"action":"open_door","x":INT,"y":INT}           — porte non verrouillee seulement
+{"action":"smash_window","x":INT,"y":INT}        — casser vitre (arme equipee de preference)
+{"action":"remove_glass_window","x":INT,"y":INT} — enlever bris apres smash
+{"action":"climb_through_window","x":INT,"y":INT}— enjamber (OBLIGATOIRE apres remove_glass)
+{"action":"loot_container","x":INT,"y":INT}      — ouvre conteneur UNE SEULE FOIS
+{"action":"take_item_from_container","x":INT,"y":INT,"item_type":"Base.X"}
+{"action":"grab_world_item","x":INT,"y":INT}     — ramasser objet au sol (dist=0 seulement)
+{"action":"attack_nearest"}
+{"action":"eat_best_food"} | {"action":"drink"} | {"action":"apply_bandage"}
+{"action":"equip_best_weapon"} | {"action":"equip_weapon","item_type":"..."} | {"action":"equip_clothing","item_type":"..."}
+{"action":"drop_heaviest"} | {"action":"sprint_toggle"} | {"action":"idle"}
 
-ORDRE OBLIGATOIRE — PROXIMITE AVANT INTERACTION :
-Tu ne peux interagir avec un conteneur, un objet au sol ou un batiment QUE si tu es deja a proximite. Chaque tour tu n'envoies qu'UNE action ; le jeu met a jour ta position au tour suivant.
-- Conteneur (loot_container, take_item_from_container) : utilise "dist" dans containers[]. Si dist > 2, envoie UNIQUEMENT move_to(container.x, container.y). N'envoie loot_container ou take_item_from_container QUE lorsque dist <= 2.
-- Objet au sol (grab_world_item) : utilise "dist" dans world_items[]. Si dist > 0, envoie UNIQUEMENT move_to(item.x, item.y). N'envoie grab_world_item QUE lorsque dist = 0 (meme case).
-- Batiment a explorer : les conteneurs a l'interieur ne sont visibles qu'une fois proche. Tu DOIS d'abord move_to(nearest_unvisited_building.entry.x, entry.y). Une fois entre, les containers apparaitront ; alors seulement move_to vers un container puis loot_container / take_item_from_container.
-- Portes (doors[]) : x, y, is_open, is_locked, dist. Si is_locked=true la porte est verrouillee a cle : open_door ne marche pas (il faut passer par une fenetre). Si is_open=false et is_locked=false, envoie open_door(x, y) puis move_to.
-- Fenetres (windows[]) : x, y, is_smashed, is_glass_removed, has_barricade, can_climb_through, dist. Si une porte est verrouillee (is_locked), entre par une fenetre : 1) move_to vers la fenetre (dist <= 1), 2) smash_window(x, y) — a faire de preference avec une arme equipee, 3) remove_glass_window(x, y), 4) climb_through_window(x, y) — OBLIGATOIRE pour enjamber et entrer (sans ca le pathfinding repasse par la porte). 5) move_to vers l'interieur. Ne pas smash_window si has_barricade ou si deja is_smashed. Ne pas remove_glass_window sauf si is_smashed et pas is_glass_removed.
-Resume : porte verrouillee → move_to fenetre, smash_window, remove_glass_window, climb_through_window (enjamber), puis move_to interieur. Toujours envoyer climb_through_window apres remove_glass_window pour entrer. Le personnage court automatiquement lors des deplacements.
+== REGLES DE PROXIMITE (STRICTES) ==
+- move_to avant toute interaction : conteneur (dist>2), objet au sol (dist>0), fenetre/porte (dist>1).
+- loot_container / take_item_from_container : seulement si dist <= 2.
+- grab_world_item : seulement si dist = 0 (meme case).
+- Ne jamais envoyer move_to vers une case listee dans non_walkable_positions.
 
-ACTIONS DISPONIBLES :
-  {"action": "move_to", "x": INT, "y": INT, "z": INT?}
-  {"action": "open_door", "x": INT, "y": INT, "z": INT?}  — ouvre une porte NON verrouillee (inutile si is_locked=true)
-  {"action": "smash_window", "x": INT, "y": INT, "z": INT?}  — casser une fenetre (mieux avec arme equipee)
-  {"action": "remove_glass_window", "x": INT, "y": INT, "z": INT?}  — enlever les bris de verre apres avoir casse
-  {"action": "climb_through_window", "x": INT, "y": INT, "z": INT?}  — enjamber la fenetre pour entrer (APRES remove_glass_window, avant move_to interieur)
-  {"action": "attack_nearest"}
-  {"action": "eat_best_food"}
-  {"action": "drink"} ou {"action": "drink", "item_type": "Base.WaterBottleFull"} / "item_name": "..."
-  {"action": "apply_bandage"} ou {"action": "apply_bandage", "item_type": "Base.Bandage"} / "item_name": "..."
-  {"action": "equip_best_weapon"}
-  {"action": "equip_weapon", "item_type": "Base.Bat" ou "item_name": "Batte"}
-  {"action": "equip_clothing", "item_type": "Base.Jacket" ou "item_name": "Veste"}
-  {"action": "loot_container", "x": INT, "y": INT, "z": INT}
-  {"action": "take_item_from_container", "x": INT, "y": INT, "z": INT?, "item_type": "Base.X" ou "item_name": "Nom"}
-  {"action": "grab_world_item", "x": INT, "y": INT, "z": INT?} ou {"action": "grab_world_item", "index": INT}
-  {"action": "drop_heaviest"}
-  {"action": "sprint_toggle"}
-  {"action": "say", "text": "message visible en jeu"}
-  {"action": "idle"}
+== LOOT ==
+Priorite : nourriture, boisson, medecine (bandages, antiseptique, antalgiques), armes, sacs (Bag/Backpack), munitions, lampe torche, briquet, vetements de protection.
+Ignorer : papier, magazines, jouets, chiffons, savon, cosmetiques, bric-a-brac.
+- Conteneur non ouvert (already_opened=false) → loot_container UNE FOIS, puis take_item_from_container.
+- Conteneur deja ouvert (already_opened=true) → take_item_from_container UNIQUEMENT, jamais loot_container.
+- Plusieurs items d'interet → action_plan avec 3-5 take_item_from_container consecutifs (un par item_type dans items_of_interest).
+- Conteneur is_empty=true ou dans known_empty_container_positions → ne pas cibler.
 
-OBSERVATIONS : position ; stats ; body_damage ; equipped ; inventory[] ; worn_clothing ; world_items (x, y, dist) ; zombies[] ; containers[] (x, y, dist, items, explored, is_empty) ; known_empty_container_positions ; doors[] ; windows[] ; locked_doors_hint ; pathfinding_blocked_by_locked_door (si present : le pathfinding a ete interrompu car une porte verrouillee bloque, tu DOIS choisir move_to vers une fenetre listee) ; pathfinding_stuck (si present : le joueur marche sans avancer, choisis une autre cible ou action) ; world_item_on_tile_hint ; container_nearby_hint ; all_nearby_containers_empty ; nothing_to_do_hint ; buildings[] ; nearest_unvisited_building ; is_busy ; action_queue ; current_action. Si pathfinding_blocked_by_locked_door ou pathfinding_stuck ou world_item_on_tile_hint ou container_nearby_hint est present, applique l'instruction en priorite.
+== PORTE VERROUILLEE ==
+is_locked=true : open_door est inutile. Sequence fenetre OBLIGATOIRE :
+  move_to(fenetre) → smash_window → remove_glass_window → climb_through_window → move_to(interieur)
+Ne pas smash si has_barricade=true ou is_smashed=true. Ne pas remove_glass si is_glass_removed=true.
 
-PRIORITES DE SURVIE :
-1. Si stats.health < 50 et pas de zombie proche → se reposer sur place (ne rien faire d'urgent ; si bandage disponible, apply_bandage ; sinon envoie l'action suivante de survie)
-2. Si body_damage.is_bleeding ou body_damage.needs_bandage et item is_bandage en inventaire → apply_bandage
-3. Si zombie a dist < 3 → attack_nearest si arme equipee (non cassee), sinon sprint_toggle + move_to (fuir)
-4. Si stats.thirst eleve (ex. > 0.2) et item is_drink en inventaire → drink
-5. Si stats.hunger eleve (ex. > 0.5) et nourriture en inventaire → eat_best_food
-6. Pas d'arme equipee → equip_best_weapon ou equip_weapon avec item_type
-7. Manque protection (worn_clothing) → equip_clothing avec item is_clothing de l'inventaire
-8. Objet au sol : si world_items[].dist > 0 → move_to(item.x, item.y). Si dist = 0 (ou world_item_on_tile_hint present) → OBLIGATOIRE grab_world_item(x,y) ou index — jamais move_to quand un objet est sur ta case.
-9. Conteneur : is_empty=false uniquement. Si dist > 2 → move_to. Si dist <= 2 et container_nearby_hint present : si already_opened/explored → take_item_from_container avec item_type UNIQUEMENT dans items_of_interest (pas d'objets inutiles). Si pas encore ouvert → loot_container UNE SEULE FOIS puis take_item_from_container aux tours suivants. Pour enchaîner vite : envoie action_plan avec plusieurs take_item_from_container (3-5 items d'interet).
-10. Conteneur vide (is_empty ou known_empty_container_positions) : ne jamais cibler. Choisir autre conteneur ou objectif.
-11. Si all_nearby_containers_empty=true : tous les conteneurs proches sont vides → ne pas envoyer loot_container ni idle. Etablis un action_plan : t'eloigner des zones de danger (move_to oppose aux zombies si proches), puis aller fouiller un nouveau batiment (move_to nearest_unvisited_building.entry).
-12. Porte fermee non verrouillee (is_open=false, is_locked=false) → open_door(door.x, door.y) puis move_to
-13. Porte verrouillee : move_to fenetre, smash_window(x,y), remove_glass_window(x,y), puis climb_through_window(x,y) pour enjamber et entrer, puis move_to interieur. Sans climb_through_window le personnage ne rentre pas.
-14. Batiment non visite : move_to(entry) ou open_door si porte fermee non verrouillee ; si porte verrouillee, passer par fenetre (smash_window, remove_glass_window, climb_through_window)
-15. Trop charge (inventory_weight ~ max_weight) : equip_clothing(sac) ou drop_heaviest
+== PRIORITES DE SURVIE ==
+1. health < 50 et is_bandage en inventaire → apply_bandage
+2. body_damage.is_bleeding ou needs_bandage → apply_bandage si bandage dispo
+3. Zombie dist < 3 → attack_nearest (arme equipee non cassee), sinon fuir (sprint_toggle + move_to)
+4. thirst > 0.2 et is_drink en inventaire → drink
+5. hunger > 0.5 et nourriture en inventaire → eat_best_food
+6. Pas d'arme equipee → equip_best_weapon
+7. inventory_weight proche de max_weight → equip_clothing(sac, body_location=Back) ou drop_heaviest
+8. Objets au sol (world_item_on_tile_hint) → grab_world_item immediatement
+9. Conteneur proche (container_nearby_hint) → loot ou take selon already_opened
+10. Rien a lootter (all_nearby_containers_empty ou nothing_to_do_hint) → action_plan vers nearest_unvisited_building
 
-INDICATIONS DE JEU :
-- Equiper un sac (sac a dos, sac de sport, etc.) augmente max_weight : utiliser equip_clothing avec un item is_clothing dont body_location est "Back" (ou "Bag") pour porter plus.
-- En PZ, une arme a deux mains (is_two_handed) ne retire pas le sac a dos : tu peux garder sac + arme deux mains. is_two_handed sert a savoir comment l'arme est portee (deux mains).
-- Les slots worn_clothing (body_location) incluent Torso, Hands, Back, Belt, etc. ; un sac sur le dos (Back) est prioritaire pour la capacite.
+== SIGNAUX SPECIAUX (priorite absolue si presents) ==
+- world_item_on_tile_hint : reponds UNIQUEMENT grab_world_item(hint.x, hint.y). Rien d'autre.
+- container_nearby_hint : reponds avec loot_container ou take_item_from_container selon already_opened. Pas move_to.
+- pathfinding_blocked_by_locked_door : move_to vers une fenetre de la liste fournie. Pas open_door, pas idle.
+- pathfinding_stuck : choisis une AUTRE cible ou action. Ne re-envoie pas le meme move_to.
+- switch_container_hint : move_to vers un autre conteneur ou nearest_unvisited_building. Ne pas take/loot ici.
+- nothing_to_do_hint=true : action_plan obligatoire (jamais idle). Eloigne-toi du danger puis explore nearest_unvisited_building.
 
-REGLES :
-- Reponds UNIQUEMENT avec un objet JSON. Soit {"action": "..."} (une action), soit {"action_plan": [{action1}, {action2}, ...], "plan": "description"} (liste d'actions executees par le bridge). Rien d'autre, pas de markdown.
-- Si world_item_on_tile_hint ou container_nearby_hint : grab_world_item ou action conteneur (loot_container une seule fois si pas ouvert, sinon take_item_from_container avec item_type de items_of_interest/items). Pas move_to.
-- Ne jamais attaquer sans arme equipee en bon etat
-- Armes : condition, condition_max, is_broken ; preferer condition elevee
-- Si is_busy=true (ou current_action present) : le personnage est occupe. Le bridge gere l'attente automatiquement — ne renvoie PAS idle. Envoie l'action suivante logique de ton plan. Ne renvoie JAMAIS move_to vers la meme destination que tu viens de donner (cela provoque une boucle). En cas de danger tu peux choisir attack_nearest, apply_bandage, sprint_toggle, open_door, smash_window, remove_glass_window, climb_through_window. N'envoie pas move_to, loot_container, grab_world_item, eat_best_food, drink, equip_* tant qu'il est occupe.
-- Ne jamais take/loot/grab si dist trop grand : move_to d'abord.
-- Porte fermee non verrouillee : open_door avant move_to. Porte verrouillee : move_to fenetre, smash_window, remove_glass_window, puis climb_through_window pour enjamber (obligatoire), puis move_to interieur.
-
-QUAND TU N'AS PLUS RIEN A FAIRE (nothing_to_do_hint=true dans l'observation, ou all_nearby_containers_empty sans conteneur a proximite, sans urgence sante/zombie immediat) : ne reponds JAMAIS avec {\"action\": \"idle\"}. Tu DOIS etablir un nouveau plan d'action en envoyant \"action_plan\" : 1) S'eloigner des zones de danger : si des zombies sont proches (zombies[].dist < 5), inclus d'abord sprint_toggle et/ou move_to vers une case plus eloignee des zombies (utilise ta position et zombies[].x/y pour choisir une direction opposee). 2) Puis aller fouiller un nouveau batiment : move_to(nearest_unvisited_building.entry.x, entry.y), puis open_door si porte fermee non verrouillee, move_to vers un conteneur, loot_container, etc. Donne 3 a 10 actions dans action_plan et \"plan\" (ex. \"S'eloigner du danger puis fouiller la pharmacie\"). Si nearest_unvisited_building est absent (aucun batiment non visite), utilise move_to vers un conteneur plus loin (containers[] avec is_empty=false) ou idle en dernier recours."""
+== NOTES JEU ==
+- Le personnage court automatiquement (sprint_toggle active/desactive).
+- Sac (body_location=Back) augmente max_weight — prioritaire a equiper.
+- Arme deux mains (is_two_handed) compatible avec sac a dos.
+- is_busy=true : le bridge gere l'attente, envoie l'action SUIVANTE de ton plan (urgence uniquement : attack, apply_bandage, sprint_toggle). Ne renvoie pas le meme move_to."""
 
 
 def _safe_dict(v):
@@ -1196,6 +1175,67 @@ def _parse_llm_json(raw: str) -> tuple[dict, str]:
     return data, raw
 
 
+def build_user_content(obs: dict, memory: dict) -> str:
+    """Assemble le message utilisateur envoye au LLM : blocs de contexte urgents + memoire + obs JSON."""
+    blocks = [
+        build_pathfinding_blocked_block(obs),
+        build_pathfinding_stuck_block(obs),
+        build_move_to_recovery_hint(memory),
+        build_reached_move_to_hint(memory, obs),
+        build_player_busy_block(obs),
+        build_already_moving_hint(obs, memory),
+        build_nothing_to_do_block(obs),
+        build_locked_door_failed_block(obs, memory),
+        build_memory_summary(obs, memory),
+    ]
+    header = "".join(b for b in blocks if b)
+    return header + "\n\nObservation (JSON):\n" + json.dumps(obs, ensure_ascii=False)
+
+
+def _process_llm_response(cmd: dict, memory: dict, memory_path: Path) -> dict:
+    """Traite la reponse LLM : depile action_plan si present, sauvegarde le plan texte, retourne la commande courante."""
+    if isinstance(cmd, dict) and "action_plan" in cmd:
+        lst = cmd.get("action_plan")
+        if isinstance(lst, list) and len(lst) > 0:
+            normalized = [_normalize_cmd(c) for c in lst if isinstance(c, dict) and c.get("action")]
+            normalized = _collapse_consecutive_same_move_to(normalized)
+            if normalized:
+                memory["pending_action_queue"] = normalized[1:][:MAX_PENDING_ACTIONS]
+                cmd = normalized[0]
+        cmd.pop("action_plan", None)
+    _extract_and_save_llm_plan_text(cmd, memory, memory_path)
+    return cmd
+
+
+def _call_llm_with_retry(user_content: str, client, provider: str, log_full: bool,
+                          gemini_model: str, local_model: str,
+                          memory: dict, memory_path: Path) -> tuple[dict | None, str]:
+    """Appelle le LLM avec un retry unique sur quota 429. Retourne (cmd, raw_response) ou (None, raw)."""
+    try:
+        cmd, raw = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
+        if cmd is not None:
+            cmd = _process_llm_response(cmd, memory, memory_path)
+        return cmd, raw
+    except Exception as e:
+        err = str(e).strip() or repr(e)
+        is_429 = "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower()
+        if is_429:
+            wait_sec = 30
+            print(f"[bridge] Quota depasse. Attente {wait_sec}s puis nouvel essai...")
+            time.sleep(wait_sec)
+            try:
+                cmd, raw = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
+                if cmd is not None:
+                    cmd = _process_llm_response(cmd, memory, memory_path)
+                return cmd, raw
+            except Exception as e2:
+                print(f"[bridge] ERREUR API (apres retry) : {str(e2).strip() or repr(e2)}")
+                return None, ""
+        print(f"[bridge] ERREUR API : {err}")
+        print(f"[bridge] Verifiez la cle, le modele et le reseau.")
+        return None, ""
+
+
 def query_anthropic(user_content: str, client) -> tuple[dict, str]:
     response = client.messages.create(
         model="claude-opus-4-5",
@@ -1592,9 +1632,18 @@ def main():
             # Effacer last_written_move_to des que le joueur est arrive a destination du dernier move_to envoye.
             # CRITIQUE : sans ca, last_written_move_to reste bloque sur l'ancienne cible et tous les appels LLM
             # qui renvoient le meme move_to sont skipes indefiniment (boucle sans appel LLM).
+            # Si le client a redirige vers une case walkable (cible demandee non praticable), obs.current_walk_target
+            # contient la cible reelle ; on doit considerer "arrive" des que le joueur est proche de l'une OU l'autre.
             if last_written_move_to is not None:
                 lx, ly = last_written_move_to
-                if _player_at_or_near(obs, lx, ly, MOVE_TARGET_TOLERANCE_TILES):
+                cw = _safe_dict(obs.get("current_walk_target"))
+                cwx, cwy = cw.get("x"), cw.get("y")
+                at_requested = _player_at_or_near(obs, lx, ly, MOVE_TARGET_TOLERANCE_TILES)
+                at_actual = (
+                    cwx is not None and cwy is not None
+                    and _player_at_or_near(obs, cwx, cwy, MOVE_TARGET_TOLERANCE_TILES)
+                )
+                if at_requested or at_actual:
                     last_written_move_to = None
                     memory.pop("last_move_to_target", None)
                     # Effacer aussi last_sent_command pour ne pas bloquer le LLM sur "meme move_to"
@@ -1602,7 +1651,7 @@ def main():
                         memory["last_sent_command"] = None
                     save_memory(memory_path, memory)
                     if log_full:
-                        print(f"[bridge] last_written_move_to effacé : joueur arrivé à ({lx},{ly})")
+                        print(f"[bridge] last_written_move_to effacé : joueur arrivé (cible demandée ({int(lx)},{int(ly)}) ou réelle ({cwx},{cwy}))")
 
             if cmd is None:
                 # File d'actions : si le LLM a envoye une liste (action_plan), on depile une action sans rappeler le LLM
@@ -1675,89 +1724,21 @@ def main():
                                 print(f"[bridge] Attente {wait:.0f}s (quota gratuit)...")
                             time.sleep(wait)
 
-                    pathfinding_blocked_block = build_pathfinding_blocked_block(obs)
-                    pathfinding_stuck_block = build_pathfinding_stuck_block(obs)
-                    move_to_recovery_hint = build_move_to_recovery_hint(memory)
-                    if move_to_recovery_hint:
+                    if build_move_to_recovery_hint(memory):
                         memory.pop("last_failed_move_to_target", None)
                         save_memory(memory_path, memory)
-                    reached_move_to_hint = build_reached_move_to_hint(memory, obs)
-                    busy_block = build_player_busy_block(obs)
-                    already_moving_block = build_already_moving_hint(obs, memory)
-                    nothing_to_do_block = build_nothing_to_do_block(obs)
-                    locked_door_block = build_locked_door_failed_block(obs, memory)
-                    user_content = (
-                        pathfinding_blocked_block
-                        + pathfinding_stuck_block
-                        + move_to_recovery_hint
-                        + reached_move_to_hint
-                        + busy_block
-                        + already_moving_block
-                        + nothing_to_do_block
-                        + locked_door_block
-                        + build_memory_summary(obs, memory)
-                        + "\n\nObservation (JSON):\n"
-                        + json.dumps(obs, ensure_ascii=False)
+                    user_content = build_user_content(obs, memory)
+                    cmd, raw_response = _call_llm_with_retry(
+                        user_content, client, provider, log_full,
+                        gemini_model, local_model, memory, memory_path
                     )
-                    try:
-                        cmd, raw_response = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
-                        last_api_time = time.time()
-                        if cmd is None:
-                            # JSON invalide ou reponse vide : skip ce tick sans ecrire de commande
-                            time.sleep(args.interval)
-                            continue
-                        # Si le LLM a envoye une liste d'actions, remplir la file et prendre la premiere comme commande courante
-                        if isinstance(cmd, dict) and "action_plan" in cmd:
-                            lst = cmd.get("action_plan")
-                            if isinstance(lst, list) and len(lst) > 0:
-                                normalized = [_normalize_cmd(c) for c in lst if isinstance(c, dict) and c.get("action")]
-                                normalized = _collapse_consecutive_same_move_to(normalized)
-                                if normalized:
-                                    memory["pending_action_queue"] = normalized[1:][:MAX_PENDING_ACTIONS]
-                                    cmd = normalized[0]
-                            cmd.pop("action_plan", None)
-                        _extract_and_save_llm_plan_text(cmd, memory, memory_path)
-                    except Exception as api_err:
-                        err_msg = str(api_err).strip() or repr(api_err)
-                        is_429 = "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower()
-                        if is_429:
-                            wait_sec = 30
-                            print(f"[bridge] Quota depasse (5 req/min en gratuit). Attente {wait_sec}s puis nouvel essai...")
-                            time.sleep(wait_sec)
-                            try:
-                                cmd, raw_response = query_llm(user_content, client, provider, log_full, gemini_model=gemini_model, local_model=local_model)
-                                last_api_time = time.time()
-                                if cmd is None:
-                                    time.sleep(args.interval)
-                                    continue
-                                if isinstance(cmd, dict) and "action_plan" in cmd:
-                                    lst = cmd.get("action_plan")
-                                    if isinstance(lst, list) and len(lst) > 0:
-                                        normalized = [_normalize_cmd(c) for c in lst if isinstance(c, dict) and c.get("action")]
-                                        normalized = _collapse_consecutive_same_move_to(normalized)
-                                        if normalized:
-                                            memory["pending_action_queue"] = normalized[1:][:MAX_PENDING_ACTIONS]
-                                            cmd = normalized[0]
-                                    cmd.pop("action_plan", None)
-                                    _extract_and_save_llm_plan_text(cmd, memory, memory_path)
-                            except Exception as retry_err:
-                                err_msg = str(retry_err).strip() or repr(retry_err)
-                                print(f"[bridge] ERREUR API (apres retry) : {err_msg}")
-                                print(f"[bridge] Aucune commande envoyee ce tick.")
-                                if not log_full:
-                                    sys.stdout.write("\n")
-                                    sys.stdout.flush()
-                                time.sleep(args.interval)
-                                continue
-                        else:
-                            print(f"[bridge] ERREUR API : {err_msg}")
-                            print(f"[bridge] Verifiez la cle (GEMINI_API_KEY), le modele et le reseau.")
-                            print(f"[bridge] Aucune commande envoyee ce tick.")
-                            if not log_full:
-                                sys.stdout.write("\n")
-                                sys.stdout.flush()
-                            time.sleep(args.interval)
-                            continue
+                    last_api_time = time.time()
+                    if cmd is None:
+                        if not log_full:
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                        time.sleep(args.interval)
+                        continue
 
                 # Forcer grab/loot ou skip quand hint present ou boucle move_to (evite boucles) — seulement pour reponse LLM, pas pour move_to d'approche depuis la file
                 if not is_approach_move_to:

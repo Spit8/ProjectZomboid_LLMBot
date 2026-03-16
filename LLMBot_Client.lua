@@ -49,6 +49,13 @@ LLMBotWindowSequenceTarget = nil  -- { sq, obj, wx, wy }
 LLMBotFailedWindowKeys = LLMBotFailedWindowKeys or {}  -- { "x,y" = count }
 -- Derniere cible move_to originale (pour detecter changement de cible et reinitialiser LLMBotFailedWindowKeys)
 LLMBotLastMoveToOriginalTarget = nil
+-- Cases non walkable connues (cible move_to refusee car isFree=false ou isSolidTrans) : cles "x,y", valeur true. Limite 200.
+-- Expose dans obs.non_walkable_positions pour que le LLM ne redemande pas move_to vers ces cases.
+LLMBotNonWalkableTiles = LLMBotNonWalkableTiles or {}
+local LLMBOT_NON_WALKABLE_MAX = 200
+-- Compteur de répétitions "même walkSquare déjà en marche" : si trop élevé, on abandonne pour signaler au LLM.
+LLMBotSameWalkToRepeatCount = LLMBotSameWalkToRepeatCount or 0
+local SAME_WALKTO_MAX_REPEAT = 4
 
 -- ---------------------------------------------------------------
 -- 1. FICHIERS (Zomboid/Lua/)
@@ -914,6 +921,23 @@ local function buildObservation(player)
     -- Resultat du dernier open_door (porte verrouillee -> bridge peut suggerer fenetre ou abandon)
     obs.last_open_door_result = LLMBotLastOpenDoorResult
     LLMBotLastOpenDoorResult = nil
+    -- Cases non walkable connues : ne pas demander move_to vers ces (x,y). Limite 50, priorite aux plus proches du joueur.
+    obs.non_walkable_positions = {}
+    local px_obs, py_obs = obs.position and obs.position.x or 0, obs.position and obs.position.y or 0
+    local nwList, nwMax = {}, 50
+    for key, _ in pairs(LLMBotNonWalkableTiles) do
+        local x, y, z = key:match("^(%d+),(%d+),(%d+)$")
+        if x and y then
+            x, y = tonumber(x), tonumber(y)
+            local dist = math.abs(x - px_obs) + math.abs(y - py_obs)
+            table.insert(nwList, { x = x, y = y, dist = dist })
+        end
+    end
+    table.sort(nwList, function(a, b) return (a.dist or 999) < (b.dist or 999) end)
+    for i = 1, math.min(nwMax, #nwList) do
+        table.insert(obs.non_walkable_positions, { x = nwList[i].x, y = nwList[i].y })
+    end
+    if #obs.non_walkable_positions == 0 then obs.non_walkable_positions = nil end
 
     return obs
 end
@@ -1017,7 +1041,79 @@ local function getRedirectToWindowIfLockedDoorInWay(player, cell, tx, ty, tz)
     return nil
 end
 
+-- Retourne true si la case est praticable (isFree et non solidtrans). Voir docs/API_tuiles_walkable.md
+-- Si l'API (isFree/isSolidTrans) est absente ou erre, on considere walkable=true pour ne pas bloquer tous les deplacements.
+local function isSquareWalkable(sq)
+    if not sq then return false end
+    local ok, walkable = pcall(function()
+        if sq.isFree and not sq:isFree(false) then return false end
+        if sq.isSolidTrans and sq:isSolidTrans() then return false end
+        return true
+    end)
+    if not ok then return true end
+    return walkable == true
+end
+
+-- Retourne true si la case est interieure (non exterior). Les tiles ont un flag "exterior" (IsoFlagType).
+-- On utilise sq:getHasTypes():isSet(IsoFlagType.exterior) : si le flag est pose, la tile est exterior ; sinon interieur.
+-- Fallback : getRoom() ~= nil ou isExteriorCache == false. Si l'API manque, on considere interior=true (ne pas filtrer).
+local function isSquareInterior(sq)
+    if not sq then return true end
+    local ok, interior = pcall(function()
+        -- Priorite : flag "exterior" sur les tiles (IsoFlagType)
+        if sq.getHasTypes then
+            local hasTypes = sq:getHasTypes()
+            if hasTypes and hasTypes.isSet and IsoFlagType and IsoFlagType.exterior then
+                if hasTypes:isSet(IsoFlagType.exterior) then return false end
+                return true
+            end
+        end
+        if sq.getRoom and sq:getRoom() then return true end
+        if sq.isExteriorCache == false then return true end
+        return false
+    end)
+    if not ok then return true end
+    return interior == true
+end
+
+-- Trouve la case walkable la plus proche de (cx, cy, cz) en explorant en spirale (rayon max maxRadius). Retourne IsoGridSquare ou nil.
+-- Si mustBeInterior=true, ne retourne que des cases interieures (non exterior).
+local function findNearestWalkableSquare(cell, cx, cy, cz, maxRadius, mustBeInterior)
+    if not cell then return nil end
+    maxRadius = math.min(maxRadius or 20, 25)
+    for r = 0, maxRadius do
+        for dx = -r, r do
+            for dy = -r, r do
+                if math.abs(dx) == r or math.abs(dy) == r then
+                    local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+                    if sq and isSquareWalkable(sq) then
+                        if mustBeInterior and not isSquareInterior(sq) then
+                            -- skip
+                        else
+                            return sq
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Enregistre (x,y,z) comme non walkable ; limite la taille du cache.
+local function recordNonWalkableTile(x, y, z)
+    local key = x .. "," .. y .. "," .. (z or 0)
+    LLMBotNonWalkableTiles[key] = true
+    local n, keys = 0, {}
+    for k, _ in pairs(LLMBotNonWalkableTiles) do keys[#keys + 1] = k end
+    if #keys > LLMBOT_NON_WALKABLE_MAX then
+        table.sort(keys)
+        for i = 1, #keys - LLMBOT_NON_WALKABLE_MAX do LLMBotNonWalkableTiles[keys[i]] = nil end
+    end
+end
+
 -- Déplacement fiable : une seule marche vers la cible (ou case adjacente atteignable). Redirige vers une fenetre si la cible est derriere une porte verrouillee.
+-- Si la cible demandee n'est pas walkable, on cherche la case walkable la plus proche et on enregistre la cible comme non walkable pour le LLM.
 -- Si une WalkTo/PathFind est déjà en cours, on l'interrompt et on lance le nouveau move_to (comme les autres actions interrompibles).
 local function executeMoveTo(player, cmd)
     local tx, ty = tonumber(cmd.x), tonumber(cmd.y)
@@ -1059,17 +1155,50 @@ local function executeMoveTo(player, cmd)
         print("[LLMBot] move_to: aucune case valide vers " .. tx .. "," .. ty .. " (pos " .. px .. "," .. py .. ")")
         return
     end
+    -- Cible interieure (non exterior) : on doit amener le joueur sur une case exacte ou adjacente qui est aussi interieure.
+    local reqSq = cell:getGridSquare(tx, ty, tz)
+    local isTargetInterior = reqSq and isSquareInterior(reqSq)
+    -- Verification walkable UNIQUEMENT sur la case reellement demandee (tx,ty). Pas sur une case de fallback (intermediaire/adjacente).
+    local targetIsRequestedTile = (targetSquare:getX() == tx and targetSquare:getY() == ty)
+    if targetIsRequestedTile and not isSquareWalkable(targetSquare) then
+        recordNonWalkableTile(tx, ty, tz)
+        print("[LLMBot] move_to: case " .. tx .. "," .. ty .. " non walkable, recherche case walkable la plus proche...")
+        local nearest = findNearestWalkableSquare(cell, tx, ty, tz, 20, isTargetInterior)
+        if not nearest then
+            print("[LLMBot] move_to: aucune case walkable trouvee autour de " .. tx .. "," .. ty .. (isTargetInterior and " (interieur requis)" or ""))
+            return
+        end
+        targetSquare = nearest
+        print("[LLMBot] move_to: redirection vers " .. targetSquare:getX() .. "," .. targetSquare:getY() .. " (walkable)")
+    end
     -- Ne considérer "déjà arrivé" que si on est sur la cible FINALE (tx,ty), pas sur un waypoint
     local sqx, sqy = targetSquare:getX(), targetSquare:getY()
     local diffX = math.abs(sqx + 0.5 - player:getX())
     local diffY = math.abs(sqy + 0.5 - player:getY())
     if sqx == tx and sqy == ty and diffX <= 0.5 and diffY <= 0.5 then return end
-    -- Préférer une case adjacente atteignable (comme luautils.walkAdj) pour éviter échec pathfinding
+    -- Préférer une case adjacente atteignable (comme luautils.walkAdj) pour éviter échec pathfinding.
+    -- Si la cible est interieure, l'adjacente doit aussi etre interieure (sinon on garde targetSquare).
     local walkSquare = targetSquare
     if AdjacentFreeTileFinder and AdjacentFreeTileFinder.Find then
         local adjacent = AdjacentFreeTileFinder.Find(targetSquare, player)
         if adjacent and (adjacent:getX() ~= px or adjacent:getY() ~= py) then
-            walkSquare = adjacent
+            if not isTargetInterior or isSquareInterior(adjacent) then
+                walkSquare = adjacent
+            end
+        end
+    end
+    -- Verifier que walkSquare est effectivement walkable (AdjacentFreeTileFinder peut retourner une case bloquee).
+    -- Si non-walkable, chercher la case walkable la plus proche autour de targetSquare.
+    if not isSquareWalkable(walkSquare) then
+        recordNonWalkableTile(walkSquare:getX(), walkSquare:getY(), walkSquare:getZ())
+        print("[LLMBot] move_to: walkSquare " .. walkSquare:getX() .. "," .. walkSquare:getY() .. " non walkable, recherche alternative...")
+        local alt = findNearestWalkableSquare(cell, targetSquare:getX(), targetSquare:getY(), tz, 10, isTargetInterior)
+        if alt and (alt:getX() ~= px or alt:getY() ~= py) then
+            walkSquare = alt
+            print("[LLMBot] move_to: walkSquare redirige vers " .. walkSquare:getX() .. "," .. walkSquare:getY())
+        else
+            print("[LLMBot] move_to: aucune walkSquare alternative trouvee pour " .. tx .. "," .. ty)
+            return
         end
     end
     -- Si on est déjà en WalkTo vers la même case, ne pas interrompre (évite la boucle quand le bridge renvoie le même move_to en retry)
@@ -1080,6 +1209,16 @@ local function executeMoveTo(player, cmd)
         if typ:find("WalkTo") and cur.location then
             local lx, ly = cur.location:getX(), cur.location:getY()
             if lx == walkSquare:getX() and ly == walkSquare:getY() then
+                LLMBotSameWalkToRepeatCount = (LLMBotSameWalkToRepeatCount or 0) + 1
+                if LLMBotSameWalkToRepeatCount >= SAME_WALKTO_MAX_REPEAT then
+                    -- Trop de repetitions sans progresser : enregistrer la cible comme non-walkable et laisser le LLM décider
+                    recordNonWalkableTile(tx, ty, tz)
+                    LLMBotSameWalkToRepeatCount = 0
+                    ISTimedActionQueue.clear(player)
+                    LLMBotLastMoveToTick = 0
+                    print("[LLMBot] move_to: meme walkSquare repete " .. SAME_WALKTO_MAX_REPEAT .. "x → abandon, non-walkable enregistre pour " .. tx .. "," .. ty)
+                    return
+                end
                 -- Prolonger is_busy pour eviter que le bridge ne renvoie une commande pendant qu'on marche encore
                 LLMBotLastMoveToTick = LLMBotGlobalTick
                 print("[LLMBot] move_to: deja en marche vers " .. lx .. "," .. ly .. " — LLMBotLastMoveToTick prolonge")
@@ -1087,8 +1226,8 @@ local function executeMoveTo(player, cmd)
             end
         end
     end
+    LLMBotSameWalkToRepeatCount = 0
     LLMBotLastMoveToTick = LLMBotGlobalTick
-    ISTimedActionQueue.clear(player)
     pcall(function() if player.setSprinting then player:setSprinting(true) elseif player.setRunning and player:canSprint() then player:setRunning(true) end end)
     ISTimedActionQueue.add(LLMBotWalkToTimedAction:new(player, walkSquare))
     -- Mettre a jour LLMBotLastMoveToTarget avec la case reelle (walkSquare), pas la cible redirectee,
