@@ -33,9 +33,7 @@ Si l'agent modifie `bridge.py`, il DOIT vérifier que `start_bridge.bat` est tou
 update_mod.bat
 ```
 
-Ce script copie les fichiers vers :
-- `LLMBot_Client.lua` → `C:\Users\wiwil\Zomboid\Workshop\LLMBot\Contents\mods\LLMBot\42\media\lua\client\`
-- `LLMBot_Shared.lua` → `C:\Users\wiwil\Zomboid\Workshop\LLMBot\Contents\mods\LLMBot\42\media\lua\shared\`
+Ce script copie les fichiers vers le dossier du mod (variable `MOD_DIR` dans le script, par défaut `%USERPROFILE%\Zomboid\Workshop\LLMBot\Contents\mods\LLMBot\42\media\lua\`). Chaque développeur doit adapter `MOD_DIR` à son installation si besoin.
 
 L'exécution doit avoir lieu **après le commit** des fichiers modifiés, afin que le jeu utilise immédiatement la dernière version du mod.
 

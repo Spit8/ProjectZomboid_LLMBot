@@ -47,5 +47,4 @@ luac.out
 secrets.txt
 config.local.*
 
-.env.example
 __pycache__/bridge.cpython-313.pyc
