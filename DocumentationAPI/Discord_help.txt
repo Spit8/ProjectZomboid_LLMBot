@@ -1,0 +1,2 @@
+self.character:setRunning(true)
+should be used in update()
